@@ -1,14 +1,77 @@
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+*.egg
 *.egg-info/
 dist/
 build/
 .eggs/
-*.egg
+wheels/
+pip-wheel-metadata/
+
+# Virtual environments
 .venv/
 venv/
+env/
+ENV/
+
+# Environment variables
 .env
+.env.local
+.env.*.local
+
+# Lock files
 *.lock
-.ruff_cache/
+uv.lock
+poetry.lock
+Pipfile.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# Linting/Type checking
+.ruff_cache/
 .mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Supabase
+supabase/.temp/
+
+# Secrets & credentials
+*.pem
+*.key
+*.cert
+credentials.json
+secrets.yaml
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
