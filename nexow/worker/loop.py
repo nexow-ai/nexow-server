@@ -1,4 +1,4 @@
-"""Main worker loop — concurrent agent evaluation with market data caching."""
+"""Main worker loop — concurrent bot/agent evaluation with market data caching."""
 
 from __future__ import annotations
 
@@ -9,13 +9,14 @@ from typing import Any
 import redis.asyncio as aioredis
 import structlog
 
-from nexow.ai.factory import generate_strategy
+from nexow.ai.bot_factory import generate_bot
+from nexow.ai.factory import generate_agent
 from nexow.broker.oanda import OandaClient
 from nexow.config import settings
 from nexow.db.client import SupabaseClient
-from nexow.strategies.portfolio import PortfolioAgent
+from nexow.strategies.portfolio import PortfolioManager
 from nexow.worker.cache import MarketCache
-from nexow.worker.executor import AgentExecutor
+from nexow.worker.executor import SignalExecutor
 
 logger = structlog.get_logger(__name__)
 
@@ -38,7 +39,7 @@ class WorkerLoop:
     def __init__(self) -> None:
         self.db = SupabaseClient()
         self.market = OandaClient()
-        self.executor = AgentExecutor(self.db)
+        self.executor = SignalExecutor(self.db)
         self.cache = MarketCache(self.market)
         self._running = False
         self._eval_semaphore = asyncio.Semaphore(settings.max_concurrent_evaluations)
@@ -100,17 +101,26 @@ class WorkerLoop:
             if not prompt:
                 continue
 
-            logger.info("generating_agent_config", agent_id=agent["id"], prompt=prompt[:80])
+            agent_type = agent.get("type", "bot")
+            logger.info("generating_config", agent_id=agent["id"], type=agent_type, prompt=prompt[:80])
             try:
-                result = await generate_strategy(prompt)
+                if agent_type == "agent":
+                    result = await generate_agent(prompt)
+                else:
+                    result = await generate_bot(prompt)
+
                 config = result.config
+                # For bots with strategy_code, store it inside config
+                if hasattr(result, "strategy_code") and result.strategy_code:
+                    config["strategy_code"] = result.strategy_code
+
                 portfolio = config.get("portfolio", {})
                 instruments = portfolio.get("instruments", [])
 
                 update_data: dict = {
                     "name": result.name,
                     "description": result.description,
-                    "type": result.agent_type.value if hasattr(result.agent_type, "value") else result.agent_type,
+                    "type": agent_type,
                     "config": config,
                     "status": "active",
                 }
@@ -121,9 +131,9 @@ class WorkerLoop:
 
                 self.db.update_agent_config(agent["id"], config)
                 self.db.client.table("agents").update(update_data).eq("id", agent["id"]).execute()
-                logger.info("agent_activated", agent_id=agent["id"], name=result.name)
+                logger.info("config_generated", agent_id=agent["id"], type=agent_type, name=result.name)
             except Exception as e:
-                logger.error("agent_generation_failed", agent_id=agent["id"], error=str(e))
+                logger.error("config_generation_failed", agent_id=agent["id"], type=agent_type, error=str(e))
 
     # ------------------------------------------------------------------
     # Background: Redis price subscriber
@@ -172,11 +182,11 @@ class WorkerLoop:
             return
 
         all_instrument_configs: list[dict[str, Any]] = []
-        agent_portfolios: list[tuple[dict, PortfolioAgent]] = []
+        agent_portfolios: list[tuple[dict, PortfolioManager]] = []
 
         for agent in agents:
             try:
-                portfolio = PortfolioAgent(agent)
+                portfolio = PortfolioManager(agent)
                 agent_portfolios.append((agent, portfolio))
                 all_instrument_configs.extend(portfolio.instruments_config)
             except Exception as e:
@@ -194,7 +204,7 @@ class WorkerLoop:
         self.cache.clear_candles()
         logger.debug("tick_complete", active_agents=len(agents), evaluated=len(tasks))
 
-    async def _evaluate_agent(self, agent: dict, portfolio: PortfolioAgent) -> None:
+    async def _evaluate_agent(self, agent: dict, portfolio: PortfolioManager) -> None:
         async with self._eval_semaphore:
             for inst_config in portfolio.instruments_config:
                 instrument = inst_config["instrument"]

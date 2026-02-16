@@ -1,4 +1,4 @@
-"""Agent executor — evaluates a single agent and records its signals."""
+"""Signal executor — evaluates a single bot or agent and records its signals."""
 
 from __future__ import annotations
 
@@ -6,20 +6,20 @@ from typing import Any
 
 import structlog
 
-from nexow.strategies.base import AgentStrategy, Signal, SignalType
-from nexow.strategies.discretionary import DiscretionaryAgent
-from nexow.strategies.systematic import SystematicAgent
+from nexow.strategies.base import BaseStrategy, Signal, SignalType
+from nexow.strategies.bot import BotStrategy
+from nexow.strategies.agent import AgentStrategy
 from nexow.broker.models import Candle
 from nexow.db.client import SupabaseClient
 
 logger = structlog.get_logger(__name__)
 
 
-class AgentExecutor:
+class SignalExecutor:
     """
-    Evaluates agent strategies and records entry/exit signals.
+    Evaluates bot/agent strategies and records entry/exit signals.
 
-    Agents are pure signal providers — they do NOT place broker orders.
+    Bots and agents are pure signal providers — they do NOT place broker orders.
     Accounting is return-% based: each trade tracks the percentage change
     from entry to exit.
     """
@@ -27,33 +27,34 @@ class AgentExecutor:
     def __init__(self, db: SupabaseClient) -> None:
         self.db = db
 
-    def _create_strategy(self, agent: dict[str, Any]) -> AgentStrategy:
-        agent_id = agent["id"]
-        config = agent.get("config", {})
-        agent_type = agent.get("type", "bot")
+    def _create_strategy(self, record: dict[str, Any]) -> BaseStrategy:
+        record_id = record["id"]
+        config = record.get("config", {})
+        record_type = record.get("type", "bot")
 
-        if agent_type == "agent":
-            return DiscretionaryAgent(agent_id, config)
-        return SystematicAgent(agent_id, config)
+        if record_type == "agent":
+            return AgentStrategy(record_id, config)
+        return BotStrategy(record_id, config)
 
     async def execute(
         self,
-        agent: dict[str, Any],
+        record: dict[str, Any],
         candles: list[Candle],
         current_price: float,
     ) -> None:
-        """Run one evaluation cycle for a single agent on one instrument."""
-        agent_id = agent["id"]
-        instrument = candles[0].instrument if candles else agent.get("instrument", "EUR_USD")
+        """Run one evaluation cycle for a single bot or agent on one instrument."""
+        record_id = record["id"]
+        instrument = candles[0].instrument if candles else record.get("instrument", "EUR_USD")
 
         try:
-            strategy = self._create_strategy(agent)
+            strategy = self._create_strategy(record)
             signal: Signal = await strategy.evaluate(candles, current_price)
 
             logger.info(
-                "agent_signal",
-                agent_id=agent_id[:8],
-                name=agent.get("name", "?"),
+                "signal_emitted",
+                id=record_id[:8],
+                name=record.get("name", "?"),
+                type=record.get("type", "bot"),
                 instrument=instrument,
                 signal=signal.type.value,
                 reason=signal.reason,
@@ -64,17 +65,17 @@ class AgentExecutor:
                 return
 
             if signal.type == SignalType.CLOSE:
-                self._close_positions(agent_id, instrument, current_price)
+                self._close_positions(record_id, instrument, current_price)
                 return
 
-            open_trades = self.db.get_open_trades(agent_id)
+            open_trades = self.db.get_open_trades(record_id)
             already_open = any(t["instrument"] == instrument for t in open_trades)
             if already_open:
-                logger.debug("trade_skipped_already_open", agent_id=agent_id[:8], instrument=instrument)
+                logger.debug("trade_skipped_already_open", id=record_id[:8], instrument=instrument)
                 return
 
             trade_record: dict[str, Any] = {
-                "agent_id": agent_id,
+                "agent_id": record_id,
                 "instrument": instrument,
                 "direction": signal.type.value,
                 "entry_price": current_price,
@@ -86,7 +87,7 @@ class AgentExecutor:
 
             logger.info(
                 "signal_recorded",
-                agent_id=agent_id[:8],
+                id=record_id[:8],
                 instrument=instrument,
                 direction=signal.type.value,
                 entry_price=current_price,
@@ -95,10 +96,10 @@ class AgentExecutor:
             )
 
         except Exception as e:
-            logger.error("agent_execution_error", agent_id=agent_id, instrument=instrument, error=str(e))
+            logger.error("execution_error", id=record_id, instrument=instrument, error=str(e))
 
-    def _close_positions(self, agent_id: str, instrument: str, current_price: float) -> None:
-        open_trades = self.db.get_open_trades(agent_id)
+    def _close_positions(self, record_id: str, instrument: str, current_price: float) -> None:
+        open_trades = self.db.get_open_trades(record_id)
 
         for trade in open_trades:
             if trade.get("instrument") != instrument:
@@ -114,4 +115,4 @@ class AgentExecutor:
 
             self.db.close_trade(trade["id"], current_price, return_pct)
 
-        logger.info("positions_closed", agent_id=agent_id[:8], instrument=instrument, price=current_price)
+        logger.info("positions_closed", id=record_id[:8], instrument=instrument, price=current_price)
