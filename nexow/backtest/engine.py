@@ -514,7 +514,7 @@ class BacktestEngine:
 
         # Sharpe ratio (annualized, assuming ~252 trading days)
         if len(returns) > 1:
-            std = float(pl.Series(returns).std())
+            std = float(pl.Series("returns", [float(r) for r in returns]).std())
             if std > 0:
                 sharpe = (avg_return / std) * math.sqrt(252)
             else:
