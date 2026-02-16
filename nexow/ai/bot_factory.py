@@ -14,7 +14,7 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
-from nexow.ai.code_validator import CodeValidationError, validate_strategy_code
+from nexow.ai.code_validator import CodeValidationError, sanitize_strategy_code, validate_strategy_code
 from nexow.ai.schemas import BotGenerationResult
 from nexow.config import settings
 
@@ -56,18 +56,21 @@ val = df["close"][-2]              # second-to-last
 
 ### Rolling window operations (inside with_columns)
 ```python
-pl.col("close").rolling_mean(20)              # SMA
-pl.col("close").rolling_std(20)               # Rolling std dev
-pl.col("close").rolling_max(20)               # Rolling max
-pl.col("close").rolling_min(20)               # Rolling min
-pl.col("close").rolling_sum(20)               # Rolling sum
-pl.col("close").rolling_median(20)            # Rolling median
+pl.col("close").rolling_mean(window_size=20)     # SMA
+pl.col("close").rolling_std(window_size=20)      # Rolling std dev
+pl.col("close").rolling_max(window_size=20)      # Rolling max
+pl.col("close").rolling_min(window_size=20)      # Rolling min
+pl.col("close").rolling_sum(window_size=20)      # Rolling sum
+pl.col("close").rolling_median(window_size=20)   # Rolling median
+# IMPORTANT: Do NOT use .rolling(N).mean() — that API does not exist.
+# Always use rolling_mean, rolling_std, rolling_max, etc. directly.
 ```
 
 ### EMA / exponential smoothing
 ```python
 pl.col("close").ewm_mean(span=12)            # EMA with span
 pl.col("close").ewm_mean(alpha=0.2)          # EMA with alpha
+# DO NOT use .ewm(...) accessor! It does not exist on Expr. Use ewm_mean/ewm_std directly.
 ```
 
 ### Shift / lag / diff
@@ -89,8 +92,8 @@ pl.col("high") - pl.col("low")              # Range
 ### RSI (Relative Strength Index)
 ```python
 delta = pl.col("close").diff()
-gain = delta.clip(lower_bound=0).rolling_mean(period)
-loss = (-delta.clip(upper_bound=0)).rolling_mean(period)
+gain = delta.clip(lower_bound=0).rolling_mean(window_size=14)
+loss = (-delta.clip(upper_bound=0)).rolling_mean(window_size=14)
 rsi = (100 - 100 / (1 + gain / loss)).alias("rsi")
 ```
 
@@ -104,8 +107,8 @@ ema_slow = pl.col("close").ewm_mean(span=26).alias("ema26")
 
 ### Bollinger Bands
 ```python
-sma = pl.col("close").rolling_mean(20).alias("bb_mid")
-std = pl.col("close").rolling_std(20).alias("bb_std")
+sma = pl.col("close").rolling_mean(window_size=20).alias("bb_mid")
+std = pl.col("close").rolling_std(window_size=20).alias("bb_std")
 # then: upper = df["bb_mid"] + 2 * df["bb_std"]
 #        lower = df["bb_mid"] - 2 * df["bb_std"]
 ```
@@ -124,12 +127,12 @@ tr = pl.max_horizontal(
     (pl.col("high") - pl.col("close").shift(1)).abs(),
     (pl.col("low") - pl.col("close").shift(1)).abs(),
 ).alias("tr")
-atr = pl.col("tr").rolling_mean(14).alias("atr")
+atr = pl.col("tr").rolling_mean(window_size=14).alias("atr")
 ```
 
 ### Volume Moving Average
 ```python
-vol_avg = pl.col("volume").rolling_mean(20).alias("vol_avg")
+vol_avg = pl.col("volume").rolling_mean(window_size=20).alias("vol_avg")
 # spike: df["volume"][-1] > 2 * df["vol_avg"][-1]
 ```
 
@@ -141,6 +144,7 @@ vol_avg = pl.col("volume").rolling_mean(20).alias("vol_avg")
 4. Always handle edge cases (not enough data → return "hold")
 5. Use `open_trades` to avoid opening duplicate positions (e.g. `if open_trades > 0: return "hold"`)
 6. Compute indicators with `df = df.with_columns([...])` then read scalars with `df["col"][-1]`
+7. For rolling windows ALWAYS use `rolling_mean(window_size=N)`, `rolling_std(window_size=N)`, etc. NEVER use `.rolling(N).mean()` — that API does not exist
 
 ## Portfolio
 
@@ -171,13 +175,13 @@ def evaluate(df, current_price, open_trades):
 
     # RSI
     delta = pl.col("close").diff()
-    gain = delta.clip(lower_bound=0).rolling_mean(14)
-    loss = (-delta.clip(upper_bound=0)).rolling_mean(14)
+    gain = delta.clip(lower_bound=0).rolling_mean(window_size=14)
+    loss = (-delta.clip(upper_bound=0)).rolling_mean(window_size=14)
     rsi = (100 - 100 / (1 + gain / loss)).alias("rsi")
 
     # Bollinger lower band
-    bb_mid = pl.col("close").rolling_mean(20)
-    bb_std = pl.col("close").rolling_std(20)
+    bb_mid = pl.col("close").rolling_mean(window_size=20)
+    bb_std = pl.col("close").rolling_std(window_size=20)
     bb_lower = (bb_mid - 2 * bb_std).alias("bb_lower")
 
     df = df.with_columns([rsi, bb_lower])
@@ -233,7 +237,8 @@ async def generate_bot(
         result = await factory.run(prompt)
         generation = result.output
 
-        # Validate the generated code
+        # Strip harmless imports then validate
+        generation.strategy_code = sanitize_strategy_code(generation.strategy_code)
         try:
             validate_strategy_code(generation.strategy_code)
         except CodeValidationError as e:

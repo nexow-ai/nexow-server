@@ -77,6 +77,69 @@ async def execute_strategy(
         return "hold"
 
 
+def _generate_sample_candles(count: int = 50) -> list[dict[str, Any]]:
+    """Generate deterministic sample OHLCV candles for dry-run validation.
+
+    Produces a zigzag price pattern with enough data points for common
+    indicators (RSI-14, SMA-20, Bollinger-20, etc.).
+    """
+    candles = []
+    base = 1.10000
+    for i in range(count):
+        offset = ((i % 10) - 5) * 0.001
+        o = round(base + offset, 5)
+        c = round(o + 0.0005, 5)
+        h = round(max(o, c) + 0.001, 5)
+        l = round(min(o, c) - 0.001, 5)
+        candles.append(
+            {
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+                "volume": 1000 + i * 10,
+                "time": f"2024-01-{(i // 24) + 1:02d}T{i % 24:02d}:00:00",
+            }
+        )
+    return candles
+
+
+async def dry_run_strategy(code: str) -> tuple[str, str | None]:
+    """Execute strategy code against sample data to verify it runs.
+
+    Returns ``(action, error)`` — *error* is ``None`` when the code
+    executed successfully.  If the executor sidecar is unreachable the
+    dry-run is silently skipped (returns ``("hold", None)``).
+    """
+    sample_candles = _generate_sample_candles(50)
+    current_price = sample_candles[-1]["close"]
+
+    client = _get_client()
+    try:
+        resp = await client.post(
+            "/execute",
+            json={
+                "code": code,
+                "candles": sample_candles,
+                "current_price": current_price,
+                "open_trade_count": 0,
+                "timeout_ms": 5000,
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        error = data.get("error")
+        action = data.get("action", "hold")
+        return action, error
+
+    except httpx.ConnectError:
+        logger.warning("dry_run_skipped_executor_unavailable")
+        return "hold", None
+    except Exception as e:
+        return "hold", str(e)
+
+
 async def check_health() -> dict[str, Any]:
     """Check the executor sidecar health."""
     client = _get_client()

@@ -8,6 +8,7 @@ before it ever reaches the executor.
 from __future__ import annotations
 
 import ast
+import re
 
 import structlog
 
@@ -29,9 +30,35 @@ BLOCKED_MODULES = frozenset({
     "pickle", "shelve", "ctypes", "importlib",
 })
 
+# Imports that are harmless because these modules are pre-loaded in the
+# sandbox. LLMs habitually add them; stripping avoids wasting retries.
+_SAFE_IMPORT_RE = re.compile(
+    r"^\s*(?:"
+    r"import\s+polars(?:\s+as\s+pl)?"
+    r"|import\s+math"
+    r"|from\s+math\s+import\s+.+"
+    r")\s*$",
+    re.MULTILINE,
+)
+
 
 class CodeValidationError(Exception):
     """Raised when generated code fails validation."""
+
+
+def sanitize_strategy_code(code: str) -> str:
+    """Strip harmless import lines that LLMs habitually add.
+
+    Removes ``import polars as pl``, ``import math``, etc. since these
+    are already pre-loaded in the sandbox and would otherwise fail
+    validation.
+    """
+    cleaned = _SAFE_IMPORT_RE.sub("", code)
+    # Collapse leading blank lines left after stripping
+    cleaned = re.sub(r"\A\n+", "", cleaned)
+    if cleaned != code:
+        logger.debug("sanitized_safe_imports")
+    return cleaned
 
 
 def validate_strategy_code(code: str) -> None:
@@ -40,7 +67,7 @@ def validate_strategy_code(code: str) -> None:
     Checks:
     1. Code must parse as valid Python
     2. Must contain a top-level `evaluate` function
-    3. No import / import-from statements
+    3. No import / import-from statements (safe ones are pre-stripped)
     4. No calls to blocked builtins (exec, eval, open, etc.)
     5. No access to dunder attributes (__class__, __globals__, etc.)
     """
@@ -62,7 +89,7 @@ def validate_strategy_code(code: str) -> None:
 
     # 3-5. Walk the AST and check for violations
     for node in ast.walk(tree):
-        # Block imports
+        # Block imports (safe ones already stripped by sanitize_strategy_code)
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             module = ""
             if isinstance(node, ast.ImportFrom) and node.module:
