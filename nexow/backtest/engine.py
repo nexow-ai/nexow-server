@@ -1,6 +1,6 @@
 """
 Backtest Engine — walks historical candles bar-by-bar and evaluates
-the exact same rule interpreter used for live trading.
+bot strategy code via the WASM executor sidecar.
 
 Produces trades, equity curve, and summary statistics.
 Streams partial equity curve data during simulation for real-time charting.
@@ -9,18 +9,17 @@ Streams partial equity curve data during simulation for real-time charting.
 from __future__ import annotations
 
 import math
-from bisect import bisect_right
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-import numpy as np
+import polars as pl
 import structlog
 
 from nexow.broker.models import Candle
 from nexow.broker.oanda import OandaClient
-from nexow.rules.interpreter import MarketSnapshot, MultiSnapshot, evaluate_rules
+from nexow.strategies.wasm_client import execute_strategy
 
 logger = structlog.get_logger(__name__)
 
@@ -104,10 +103,10 @@ class ProgressUpdate:
 
 class BacktestEngine:
     """
-    Runs a historical simulation of a systematic agent's rules.
+    Runs a historical simulation of a bot's strategy code via the WASM executor.
 
-    Reuses the exact same `evaluate_rules()` function from the live engine
-    to guarantee parity between backtest and live execution.
+    Walks candles bar-by-bar, sends each window to the WASM sandbox for
+    evaluation, and tracks trades, equity curve, and statistics.
     """
 
     def __init__(self, market: OandaClient | None = None) -> None:
@@ -130,18 +129,18 @@ class BacktestEngine:
         portfolios are handled correctly.
 
         Args:
-            config: Agent config JSON (must contain "rules" key).
+            config: Bot config JSON (must contain "strategy_code").
             instruments: List of {"instrument": "EUR_USD", "timeframe": "M5"}.
             exit_config: {"stop_loss_pct": N, "take_profit_pct": M}.
             period_start: Start of backtest period.
             period_end: End of backtest period.
         """
-        rules = config.get("rules", {})
-        if not rules:
+        strategy_code = config.get("strategy_code", "")
+        if not strategy_code:
             yield ProgressUpdate(
                 phase="error",
                 progress_pct=0,
-                message="No rules found in agent config",
+                message="No strategy_code found in bot config",
             )
             return
 
@@ -229,11 +228,6 @@ class BacktestEngine:
                 tfs, key=lambda tf: len(pair_candles.get(f"{inst}:{tf}", []))
             )
 
-        # Pre-compute sorted timestamp lists for bisect lookups on non-primary TFs
-        candle_times: dict[str, list[datetime]] = {}
-        for pair_key, candles in pair_candles.items():
-            candle_times[pair_key] = [c.time for c in candles]
-
         # Build events ONLY from the primary (fastest) timeframe per instrument.
         # Slower timeframes provide context data, not evaluation triggers.
         # Event = (candle_time, instrument, primary_pair_key, candle_index)
@@ -262,47 +256,14 @@ class BacktestEngine:
             primary_tfs=primary_tf,
         )
 
-        # ----------------------------------------------------------
-        # Phase 2b: Dry-run diagnostic — sample rules on a few bars
-        # ----------------------------------------------------------
-        unknown_types: set[str] = set()
-        self._collect_unknown_conditions(rules, unknown_types)
-        if unknown_types:
-            logger.warning("backtest_unknown_conditions", types=list(unknown_types))
-            yield ProgressUpdate(
-                phase="simulating",
-                progress_pct=31,
-                message=f"Warning: unknown condition types in rules: {', '.join(sorted(unknown_types))}. "
-                        f"These always evaluate to false.",
-            )
-
-        # Quick sample: evaluate rules on ~50 evenly-spaced events using
-        # full MultiSnapshot to test multi-timeframe conditions.
-        sample_step = max(1, total_events // 50)
-        sample_signals: dict[str, int] = {"buy": 0, "sell": 0, "close": 0, "hold": 0}
-        for si in range(0, total_events, sample_step):
-            s_time, s_inst, s_pk, s_ci = events[si]
-            multi = self._build_multi_snapshot(
-                s_inst, s_pk, s_ci, s_time,
-                inst_timeframes, pair_candles, candle_times,
-                primary_tf, open_trade_count=0,
-            )
-            if multi is not None:
-                sa = evaluate_rules(rules, multi)
-                sample_signals[sa] = sample_signals.get(sa, 0) + 1
-
-        logger.info("backtest_rule_sample", signals=sample_signals)
-        if sample_signals["buy"] == 0 and sample_signals["sell"] == 0:
-            yield ProgressUpdate(
-                phase="simulating",
-                progress_pct=32,
-                message=f"Warning: rules produced 0 buy/sell signals in a "
-                        f"{len(range(0, total_events, sample_step))}-bar sample. "
-                        f"The strategy may be too restrictive for this data.",
-            )
+        yield ProgressUpdate(
+            phase="simulating",
+            progress_pct=31,
+            message="Running WASM-sandboxed strategy code...",
+        )
 
         # ----------------------------------------------------------
-        # Phase 3: Event-driven simulation with MultiSnapshot
+        # Phase 3: Event-driven simulation via WASM executor
         # ----------------------------------------------------------
         closed_trades: list[BacktestTrade] = []
         open_trades: dict[str, BacktestTrade] = {}  # keyed by instrument
@@ -332,16 +293,22 @@ class BacktestEngine:
                     cumulative_return += trade.return_pct or 0.0
                     del open_trades[instrument]
 
-            # Build MultiSnapshot: one snapshot per timeframe for this instrument
-            multi = self._build_multi_snapshot(
-                instrument, primary_pair, candle_idx, event_time,
-                inst_timeframes, pair_candles, candle_times,
-                primary_tf, open_trade_count=len(open_trades),
+            # Evaluate via WASM executor
+            start_idx = max(0, candle_idx - WARMUP_BARS + 1)
+            candle_window = primary_candles[start_idx : candle_idx + 1]
+            candle_dicts = [
+                {
+                    "open": c.open, "high": c.high, "low": c.low,
+                    "close": c.close, "volume": c.volume, "time": c.time.isoformat(),
+                }
+                for c in candle_window
+            ]
+            action = await execute_strategy(
+                code=strategy_code,
+                candles=candle_dicts,
+                current_price=current_price,
+                open_trade_count=len(open_trades),
             )
-            if multi is None:
-                continue
-
-            action = evaluate_rules(rules, multi)
 
             if action == "hold":
                 pass
@@ -444,95 +411,6 @@ class BacktestEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _build_multi_snapshot(
-        instrument: str,
-        primary_pair: str,
-        primary_candle_idx: int,
-        event_time: datetime,
-        inst_timeframes: dict[str, list[str]],
-        pair_candles: dict[str, list[Candle]],
-        candle_times: dict[str, list[datetime]],
-        primary_tf: dict[str, str],
-        open_trade_count: int = 0,
-    ) -> MultiSnapshot | None:
-        """
-        Build a MultiSnapshot containing one MarketSnapshot per timeframe
-        for the given instrument at the given event time.
-
-        The primary timeframe uses the exact candle_idx. Non-primary
-        timeframes use bisect to find the latest candle at or before
-        the event time.
-        """
-        snapshots: dict[str, MarketSnapshot] = {}
-        default_tf = primary_tf[instrument]
-
-        for tf in inst_timeframes[instrument]:
-            pair_key = f"{instrument}:{tf}"
-            candles = pair_candles.get(pair_key, [])
-            if not candles:
-                continue
-
-            if pair_key == primary_pair:
-                latest_idx = primary_candle_idx
-            else:
-                # Binary search: latest candle at or before event_time
-                times = candle_times.get(pair_key, [])
-                latest_idx = bisect_right(times, event_time) - 1
-
-            if latest_idx < 2:
-                continue
-
-            start = max(0, latest_idx - WARMUP_BARS + 1)
-            window = candles[start : latest_idx + 1]
-
-            if len(window) < 2:
-                continue
-
-            snapshots[tf] = MarketSnapshot(
-                window, window[-1].close, open_trade_count=open_trade_count,
-            )
-
-        if not snapshots or default_tf not in snapshots:
-            return None
-
-        return MultiSnapshot(snapshots, default_tf)
-
-    # Known condition types supported by the rule interpreter
-    _KNOWN_CONDITIONS = {
-        "price_above", "price_below", "price_change_pct_up", "price_change_pct_down",
-        "price_dropped_pct", "price_near_high", "price_near_low",
-        "candle_is_green", "candle_is_red", "candle_body_gt",
-        "consecutive_green", "consecutive_red", "doji",
-        "engulfing_bullish", "engulfing_bearish",
-        "rsi_above", "rsi_below",
-        "macd_cross_up", "macd_cross_down", "macd_positive", "macd_negative",
-        "ema_cross_up", "ema_cross_down", "price_above_ema", "price_below_ema",
-        "price_above_bb_upper", "price_below_bb_lower", "bb_squeeze",
-        "volume_above_avg", "volume_below_avg", "volume_spike",
-        "every_candle", "every_n_candles",
-        "has_no_open_trades", "has_open_trades",
-    }
-
-    @classmethod
-    def _collect_unknown_conditions(cls, rules: dict, out: set[str]) -> None:
-        """Walk the rule tree and collect any condition types not in the known set."""
-        if not isinstance(rules, dict):
-            return
-        # If this dict looks like a condition (has "type" but no "operator")
-        if "type" in rules and "operator" not in rules:
-            ctype = rules["type"]
-            if ctype not in cls._KNOWN_CONDITIONS:
-                out.add(ctype)
-            return
-        # If it's a rule group, recurse into conditions
-        for item in rules.get("conditions", []):
-            cls._collect_unknown_conditions(item, out)
-        # Top-level rule set: check buy_rules, sell_rules, close_rules
-        for key in ("buy_rules", "sell_rules", "close_rules"):
-            if key in rules:
-                cls._collect_unknown_conditions(rules[key], out)
-
-    @staticmethod
     def _check_sl_tp(
         trade: BacktestTrade,
         bar: Candle,
@@ -627,7 +505,7 @@ class BacktestEngine:
 
         # Sharpe ratio (annualized, assuming ~252 trading days)
         if len(returns) > 1:
-            std = float(np.std(returns, ddof=1))
+            std = float(pl.Series(returns).std())
             if std > 0:
                 sharpe = (avg_return / std) * math.sqrt(252)
             else:
