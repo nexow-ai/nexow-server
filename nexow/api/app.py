@@ -7,7 +7,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from nexow.api.routes import health, data, agents, backtest
+from nexow.api.routes import health, data, agents, bots, backtest
 from nexow.api.ws import router as ws_router, _redis_relay
 from nexow.config import settings
 from nexow.worker.poller import MarketDataPoller
@@ -62,6 +62,7 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(data.router)
+app.include_router(bots.router)
 app.include_router(agents.router)
 app.include_router(backtest.router)
 app.include_router(ws_router)

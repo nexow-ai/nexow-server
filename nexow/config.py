@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     pending_check_interval_seconds: int = 10
     max_concurrent_evaluations: int = 20
 
+    # --- WASM Executor ---
+    wasm_executor_url: str = "http://localhost:3001"
+
     # --- CORS ---
     cors_origins: list[str] = ["*"]
 
