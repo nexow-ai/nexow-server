@@ -277,88 +277,97 @@ class BacktestEngine:
         new_equity_points: list[EquityPoint] = []
         equity_sample_every = max(1, total_events // 300)  # ~300 points
 
-        for event_idx, (event_time, instrument, primary_pair, candle_idx) in enumerate(events):
-            primary_candles = pair_candles[primary_pair]
-            current_bar = primary_candles[candle_idx]
-            current_price = current_bar.close
-            bar_time = current_bar.time.isoformat()
-            latest_prices[instrument] = current_price
+        try:
+            for event_idx, (event_time, instrument, primary_pair, candle_idx) in enumerate(events):
+                primary_candles = pair_candles[primary_pair]
+                current_bar = primary_candles[candle_idx]
+                current_price = current_bar.close
+                bar_time = current_bar.time.isoformat()
+                latest_prices[instrument] = current_price
 
-            # Check SL/TP on this instrument's open trade (uses primary TF bar)
-            if instrument in open_trades:
-                trade = open_trades[instrument]
-                hit = self._check_sl_tp(trade, current_bar, sl_pct, tp_pct)
-                if hit:
+                # Check SL/TP on this instrument's open trade (uses primary TF bar)
+                if instrument in open_trades:
+                    trade = open_trades[instrument]
+                    hit = self._check_sl_tp(trade, current_bar, sl_pct, tp_pct)
+                    if hit:
+                        closed_trades.append(trade)
+                        cumulative_return += trade.return_pct or 0.0
+                        del open_trades[instrument]
+
+                # Evaluate via WASM executor
+                start_idx = max(0, candle_idx - WARMUP_BARS + 1)
+                candle_window = primary_candles[start_idx : candle_idx + 1]
+                candle_dicts = [
+                    {
+                        "open": c.open, "high": c.high, "low": c.low,
+                        "close": c.close, "volume": c.volume, "time": c.time.isoformat(),
+                    }
+                    for c in candle_window
+                ]
+                action = await execute_strategy(
+                    code=strategy_code,
+                    candles=candle_dicts,
+                    current_price=current_price,
+                    open_trade_count=len(open_trades),
+                )
+
+                if action == "hold":
+                    pass
+                elif action == "close" and instrument in open_trades:
+                    trade = open_trades[instrument]
+                    self._close_trade(trade, current_price, bar_time)
                     closed_trades.append(trade)
                     cumulative_return += trade.return_pct or 0.0
                     del open_trades[instrument]
+                elif action in ("buy", "sell") and instrument not in open_trades:
+                    open_trades[instrument] = BacktestTrade(
+                        instrument=instrument,
+                        direction=action,
+                        entry_price=current_price,
+                        entry_time=bar_time,
+                        stop_loss_pct=sl_pct,
+                        take_profit_pct=tp_pct,
+                    )
 
-            # Evaluate via WASM executor
-            start_idx = max(0, candle_idx - WARMUP_BARS + 1)
-            candle_window = primary_candles[start_idx : candle_idx + 1]
-            candle_dicts = [
-                {
-                    "open": c.open, "high": c.high, "low": c.low,
-                    "close": c.close, "volume": c.volume, "time": c.time.isoformat(),
-                }
-                for c in candle_window
-            ]
-            action = await execute_strategy(
-                code=strategy_code,
-                candles=candle_dicts,
-                current_price=current_price,
-                open_trade_count=len(open_trades),
+                # --- Sample equity curve (realized + unrealized) ---
+                if event_idx % equity_sample_every == 0 or event_idx == total_events - 1:
+                    unrealized = 0.0
+                    for inst, trade in open_trades.items():
+                        price_now = latest_prices.get(inst)
+                        if price_now is not None:
+                            entry = trade.entry_price
+                            if trade.direction == "buy":
+                                unrealized += ((price_now - entry) / entry) * 100
+                            else:
+                                unrealized += ((entry - price_now) / entry) * 100
+
+                    total_equity = cumulative_return + unrealized
+                    point = EquityPoint(
+                        time=event_time.isoformat(), equity=round(total_equity, 4),
+                    )
+                    equity_curve.append(point)
+                    new_equity_points.append(point)
+
+                # Yield progress every ~2%
+                current_pct = 30 + int((event_idx / total_events) * 65)
+                if current_pct >= last_yield_pct + 2:
+                    last_yield_pct = current_pct
+                    yield ProgressUpdate(
+                        phase="simulating",
+                        progress_pct=current_pct,
+                        message=f"Event {event_idx + 1:,}/{total_events:,} "
+                                f"| {len(closed_trades)} trades | {cumulative_return:+.2f}%",
+                        equity_curve=new_equity_points,
+                    )
+                    new_equity_points = []
+        except Exception as e:
+            logger.error("backtest_simulation_failed", error=str(e))
+            yield ProgressUpdate(
+                phase="error",
+                progress_pct=current_pct if 'current_pct' in locals() else 30,
+                message=f"Runtime error in strategy code: {e}",
             )
-
-            if action == "hold":
-                pass
-            elif action == "close" and instrument in open_trades:
-                trade = open_trades[instrument]
-                self._close_trade(trade, current_price, bar_time)
-                closed_trades.append(trade)
-                cumulative_return += trade.return_pct or 0.0
-                del open_trades[instrument]
-            elif action in ("buy", "sell") and instrument not in open_trades:
-                open_trades[instrument] = BacktestTrade(
-                    instrument=instrument,
-                    direction=action,
-                    entry_price=current_price,
-                    entry_time=bar_time,
-                    stop_loss_pct=sl_pct,
-                    take_profit_pct=tp_pct,
-                )
-
-            # --- Sample equity curve (realized + unrealized) ---
-            if event_idx % equity_sample_every == 0 or event_idx == total_events - 1:
-                unrealized = 0.0
-                for inst, trade in open_trades.items():
-                    price_now = latest_prices.get(inst)
-                    if price_now is not None:
-                        entry = trade.entry_price
-                        if trade.direction == "buy":
-                            unrealized += ((price_now - entry) / entry) * 100
-                        else:
-                            unrealized += ((entry - price_now) / entry) * 100
-
-                total_equity = cumulative_return + unrealized
-                point = EquityPoint(
-                    time=event_time.isoformat(), equity=round(total_equity, 4),
-                )
-                equity_curve.append(point)
-                new_equity_points.append(point)
-
-            # Yield progress every ~2%
-            current_pct = 30 + int((event_idx / total_events) * 65)
-            if current_pct >= last_yield_pct + 2:
-                last_yield_pct = current_pct
-                yield ProgressUpdate(
-                    phase="simulating",
-                    progress_pct=current_pct,
-                    message=f"Event {event_idx + 1:,}/{total_events:,} "
-                            f"| {len(closed_trades)} trades | {cumulative_return:+.2f}%",
-                    equity_curve=new_equity_points,
-                )
-                new_equity_points = []
+            return
 
         # ----------------------------------------------------------
         # Phase 4: Close remaining open trades at each pair's last bar
