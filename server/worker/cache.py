@@ -7,8 +7,8 @@ from typing import Any
 
 import structlog
 
-from nexow.broker.models import Candle
-from nexow.broker.oanda import OandaClient
+from server.broker.models import Candle
+from server.broker.oanda import OandaClient
 
 logger = structlog.get_logger(__name__)
 

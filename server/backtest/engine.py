@@ -1,6 +1,6 @@
 """
 Backtest Engine — walks historical candles bar-by-bar and evaluates
-bot strategy code via the WASM executor sidecar.
+bot strategy code via the WASM sandbox sidecar.
 
 Produces trades, equity curve, and summary statistics.
 Streams partial equity curve data during simulation for real-time charting.
@@ -103,7 +103,7 @@ class ProgressUpdate:
 
 class BacktestEngine:
     """
-    Runs a historical simulation of a bot's strategy code via the WASM executor.
+    Runs a historical simulation of a bot's strategy code via the WASM sandbox.
 
     Walks candles bar-by-bar, sends each window to the WASM sandbox for
     evaluation, and tracks trades, equity curve, and statistics.
@@ -263,7 +263,7 @@ class BacktestEngine:
         )
 
         # ----------------------------------------------------------
-        # Phase 3: Event-driven simulation via WASM executor
+        # Phase 3: Event-driven simulation via WASM sandbox
         # ----------------------------------------------------------
         closed_trades: list[BacktestTrade] = []
         open_trades: dict[str, BacktestTrade] = {}  # keyed by instrument
@@ -294,7 +294,7 @@ class BacktestEngine:
                         cumulative_return += trade.return_pct or 0.0
                         del open_trades[instrument]
 
-                # Evaluate via WASM executor
+                # Evaluate via WASM sandbox
                 start_idx = max(0, candle_idx - WARMUP_BARS + 1)
                 candle_window = primary_candles[start_idx : candle_idx + 1]
                 candle_dicts = [

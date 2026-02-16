@@ -7,10 +7,10 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from nexow.api.routes import health, data, agents, bots, backtest, labs
-from nexow.api.ws import router as ws_router, _redis_relay
-from nexow.config import settings
-from nexow.worker.poller import MarketDataPoller
+from server.api.routes import health, data, agents, bots, backtest, labs
+from server.api.ws import router as ws_router, _redis_relay
+from server.config import settings
+from server.worker.poller import MarketDataPoller
 
 logger = structlog.get_logger(__name__)
 

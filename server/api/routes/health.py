@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from nexow.config import settings
+from server.config import settings
 
 router = APIRouter(tags=["health"])
 

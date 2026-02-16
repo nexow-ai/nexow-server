@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 import redis.asyncio as aioredis
 import structlog
 
-from nexow.broker.oanda import OandaClient
-from nexow.config import settings
+from server.broker.oanda import OandaClient
+from server.config import settings
 
 logger = structlog.get_logger(__name__)
 

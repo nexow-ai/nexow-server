@@ -1,5 +1,6 @@
 """Unified configuration — single settings file for the entire backend."""
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,8 +45,11 @@ class Settings(BaseSettings):
     pending_check_interval_seconds: int = 10
     max_concurrent_evaluations: int = 20
 
-    # --- WASM Executor ---
-    wasm_executor_url: str = "http://localhost:3001"
+    # --- WASM Sandbox ---
+    sandbox_url: str = Field(
+        default="http://localhost:3001",
+        validation_alias=AliasChoices("SANDBOX_URL", "WASM_EXECUTOR_URL"),
+    )
 
     # --- CORS ---
     cors_origins: list[str] = ["*"]

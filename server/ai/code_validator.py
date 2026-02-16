@@ -2,7 +2,7 @@
 
 Defense-in-depth layer: validates generated Python code before it's stored.
 The primary sandbox is WASM (Pyodide), but this catches obvious bad code
-before it ever reaches the executor.
+before it ever reaches the sandbox.
 """
 
 from __future__ import annotations

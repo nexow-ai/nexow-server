@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from nexow.backtest.engine import BacktestEngine
+from server.backtest.engine import BacktestEngine
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
 

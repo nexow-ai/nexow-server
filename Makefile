@@ -1,4 +1,4 @@
-.PHONY: api worker executor dev install lint format test clean
+.PHONY: api worker sandbox dev install lint format test clean
 
 # ── Run ──────────────────────────────────────────────────
 
@@ -8,14 +8,14 @@ api:  ## Start the API server
 worker:  ## Start the background worker
 	uv run python -m nexow.worker
 
-executor:  ## Start the WASM executor sidecar
-	cd ../nexow-executor && npm run dev
+sandbox:  ## Start the WASM sandbox sidecar
+	cd sandbox && pnpm run dev
 
-dev:  ## Start API + worker + executor together (Ctrl+C stops all)
+dev:  ## Start API + worker + sandbox together (Ctrl+C stops all)
 	@trap 'kill 0' EXIT; \
 	uv run uvicorn nexow.api.app:app --host 0.0.0.0 --port 8000 --reload & \
 	uv run python -m nexow.worker & \
-	(cd ../nexow-executor && npm run dev) & \
+	(cd sandbox && pnpm run dev) & \
 	wait
 
 # ── Setup ────────────────────────────────────────────────

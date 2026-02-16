@@ -13,8 +13,8 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
-from nexow.ai.schemas import AgentGenerationResult
-from nexow.config import settings
+from server.ai.schemas import AgentGenerationResult
+from server.config import settings
 
 logger = structlog.get_logger(__name__)
 

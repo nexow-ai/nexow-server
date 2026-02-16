@@ -1,4 +1,4 @@
-"""HTTP client for the WASM executor sidecar.
+"""HTTP client for the WASM sandbox sidecar.
 
 Sends Python strategy code + candle data to the Pyodide sandbox
 and returns the trading signal.
@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 import structlog
 
-from nexow.config import settings
+from server.config import settings
 
 logger = structlog.get_logger(__name__)
 
@@ -23,7 +23,7 @@ def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
         _client = httpx.AsyncClient(
-            base_url=settings.wasm_executor_url,
+            base_url=settings.sandbox_url,
             timeout=httpx.Timeout(15.0, connect=5.0),
         )
     return _client
@@ -70,7 +70,7 @@ async def execute_strategy(
         logger.error("wasm_http_error", status=e.response.status_code, detail=str(e))
         return "hold"
     except httpx.ConnectError:
-        logger.error("wasm_executor_unavailable", url=settings.wasm_executor_url)
+        logger.error("sandbox_unavailable", url=settings.sandbox_url)
         return "hold"
     except Exception as e:
         logger.error("wasm_client_error", error=str(e))
@@ -108,7 +108,7 @@ async def dry_run_strategy(code: str) -> tuple[str, str | None]:
     """Execute strategy code against sample data to verify it runs.
 
     Returns ``(action, error)`` — *error* is ``None`` when the code
-    executed successfully.  If the executor sidecar is unreachable the
+    executed successfully.  If the sandbox sidecar is unreachable the
     dry-run is silently skipped (returns ``("hold", None)``).
     """
     sample_candles = _generate_sample_candles(50)
@@ -134,14 +134,14 @@ async def dry_run_strategy(code: str) -> tuple[str, str | None]:
         return action, error
 
     except httpx.ConnectError:
-        logger.warning("dry_run_skipped_executor_unavailable")
+        logger.warning("dry_run_skipped_sandbox_unavailable")
         return "hold", None
     except Exception as e:
         return "hold", str(e)
 
 
 async def check_health() -> dict[str, Any]:
-    """Check the executor sidecar health."""
+    """Check the sandbox sidecar health."""
     client = _get_client()
     try:
         resp = await client.get("/health")

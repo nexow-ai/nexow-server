@@ -8,8 +8,8 @@ from datetime import datetime
 import httpx
 import structlog
 
-from nexow.broker.models import Candle
-from nexow.config import settings
+from server.broker.models import Candle
+from server.config import settings
 
 logger = structlog.get_logger(__name__)
 

@@ -1,8 +1,8 @@
-"""Entry point: python -m nexow.worker"""
+"""Entry point: python -m server.worker"""
 
 import asyncio
 
-from nexow.worker.loop import WorkerLoop
+from server.worker.loop import WorkerLoop
 
 
 async def main() -> None:
