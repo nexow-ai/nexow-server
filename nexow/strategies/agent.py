@@ -53,6 +53,13 @@ class AgentStrategy(BaseStrategy):
             sl_pct = result.get("stop_loss_pct", exit_config.get("stop_loss_pct"))
             tp_pct = result.get("take_profit_pct", exit_config.get("take_profit_pct"))
 
+            data_sources = []
+            if self.config.get("use_web_search", True):
+                data_sources.append("web_search")
+            if self.config.get("use_news_feed", True):
+                data_sources.append("news_sentiment")
+            data_sources.append("technical_analysis")
+
             return Signal(
                 type=signal_type,
                 instrument=result.get("instrument", instrument),
@@ -60,6 +67,17 @@ class AgentStrategy(BaseStrategy):
                 stop_loss_pct=sl_pct if signal_type in (SignalType.BUY, SignalType.SELL) else None,
                 take_profit_pct=tp_pct if signal_type in (SignalType.BUY, SignalType.SELL) else None,
                 reason=result.get("reasoning", "LLM decision"),
+                metadata={
+                    "technical_summary": result.get("technical_summary", ""),
+                    "sentiment_summary": result.get("sentiment_summary", ""),
+                    "prompt_tokens": result.get("prompt_tokens", 0),
+                    "completion_tokens": result.get("completion_tokens", 0),
+                    "total_tokens": result.get("total_tokens", 0),
+                    "duration_ms": result.get("duration_ms"),
+                    "data_sources_used": data_sources,
+                    "llm_provider": self.llm_provider,
+                    "llm_model": self.llm_model,
+                },
             )
         except Exception as e:
             logger.error("agent_strategy_error", strategy_id=self.strategy_id, error=str(e))
@@ -67,6 +85,10 @@ class AgentStrategy(BaseStrategy):
                 type=SignalType.HOLD,
                 instrument=instrument,
                 reason=f"Error in reasoning: {e}",
+                metadata={
+                    "llm_provider": self.llm_provider,
+                    "llm_model": self.llm_model,
+                },
             )
 
     def _build_market_context(self, candles: list[Candle], current_price: float) -> dict[str, Any]:

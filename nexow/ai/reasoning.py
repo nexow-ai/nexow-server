@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any, TypedDict
 
 import structlog
@@ -37,6 +38,9 @@ class ReasoningState(TypedDict):
     reasoning: str
     step: int
 
+    prompt_tokens: int
+    completion_tokens: int
+
 
 def _get_llm(provider: str = "openai", model: str = "gpt-4o-mini") -> ChatOpenAI:
     """Get a LangChain LLM instance."""
@@ -53,6 +57,14 @@ def _get_llm(provider: str = "openai", model: str = "gpt-4o-mini") -> ChatOpenAI
         max_tokens=1024,
         temperature=0.3,
     )
+
+
+def _extract_token_usage(response: Any) -> tuple[int, int]:
+    """Extract prompt/completion token counts from a LangChain response."""
+    usage = getattr(response, "usage_metadata", None) or {}
+    prompt = usage.get("input_tokens", 0)
+    completion = usage.get("output_tokens", 0)
+    return prompt, completion
 
 
 async def fetch_external_data(state: ReasoningState) -> dict:
@@ -114,11 +126,18 @@ async def analyze_sentiment(state: ReasoningState) -> dict:
     try:
         response = await llm.ainvoke([SystemMessage(content="You are a financial sentiment analyst."), HumanMessage(content=prompt)])
         sentiment = response.content
+        p_tok, c_tok = _extract_token_usage(response)
     except Exception as e:
         logger.error("sentiment_analysis_error", error=str(e))
         sentiment = f"Sentiment analysis unavailable: {e}"
+        p_tok, c_tok = 0, 0
 
-    return {"sentiment_analysis": str(sentiment), "step": state.get("step", 0) + 1}
+    return {
+        "sentiment_analysis": str(sentiment),
+        "step": state.get("step", 0) + 1,
+        "prompt_tokens": state.get("prompt_tokens", 0) + p_tok,
+        "completion_tokens": state.get("completion_tokens", 0) + c_tok,
+    }
 
 
 async def analyze_correlations(state: ReasoningState) -> dict:
@@ -163,6 +182,7 @@ async def make_decision(state: ReasoningState) -> dict:
     try:
         response = await llm.ainvoke([SystemMessage(content="You are an expert forex trading AI. Be decisive but risk-aware."), HumanMessage(content=prompt)])
         text = str(response.content)
+        p_tok, c_tok = _extract_token_usage(response)
 
         action = "hold"
         instrument = state["instruments"][0] if state["instruments"] else "EUR_USD"
@@ -202,12 +222,16 @@ async def make_decision(state: ReasoningState) -> dict:
             "stop_loss_pct": sl_pct if action in ("buy", "sell") else None,
             "take_profit_pct": tp_pct if action in ("buy", "sell") else None,
             "reasoning": reasoning, "final_reasoning": text, "step": state.get("step", 0) + 1,
+            "prompt_tokens": state.get("prompt_tokens", 0) + p_tok,
+            "completion_tokens": state.get("completion_tokens", 0) + c_tok,
         }
     except Exception as e:
         logger.error("decision_llm_error", error=str(e))
         return {
             "action": "hold", "instrument": state["instruments"][0] if state["instruments"] else "EUR_USD",
             "confidence": 0.0, "reasoning": f"LLM error: {e}", "step": state.get("step", 0) + 1,
+            "prompt_tokens": state.get("prompt_tokens", 0),
+            "completion_tokens": state.get("completion_tokens", 0),
         }
 
 
@@ -236,7 +260,9 @@ async def run_reasoning_chain(
     personality: str = "cautious",
     instruments: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Execute the reasoning graph and return the decision."""
+    """Execute the reasoning graph and return the decision with token usage."""
+    start_ms = time.monotonic()
+
     initial_state: ReasoningState = {
         "agent_config": agent_config, "market_context": market_context,
         "personality": personality, "instruments": instruments or [market_context.get("instrument", "EUR_USD")],
@@ -244,11 +270,26 @@ async def run_reasoning_chain(
         "correlation_analysis": "", "final_reasoning": "",
         "action": "hold", "instrument": (instruments or ["EUR_USD"])[0],
         "confidence": 0.0, "stop_loss_pct": None, "take_profit_pct": None, "reasoning": "", "step": 0,
+        "prompt_tokens": 0, "completion_tokens": 0,
     }
 
     result = await _compiled_graph.ainvoke(initial_state)
+    elapsed_ms = int((time.monotonic() - start_ms) * 1000)
+
+    prompt_tokens = result.get("prompt_tokens", 0)
+    completion_tokens = result.get("completion_tokens", 0)
+
     return {
-        "action": result["action"], "instrument": result.get("instrument", initial_state["instrument"]),
-        "confidence": result["confidence"], "stop_loss_pct": result["stop_loss_pct"],
-        "take_profit_pct": result["take_profit_pct"], "reasoning": result["reasoning"],
+        "action": result["action"],
+        "instrument": result.get("instrument", initial_state["instrument"]),
+        "confidence": result["confidence"],
+        "stop_loss_pct": result["stop_loss_pct"],
+        "take_profit_pct": result["take_profit_pct"],
+        "reasoning": result["reasoning"],
+        "technical_summary": result.get("technical_analysis", ""),
+        "sentiment_summary": result.get("sentiment_analysis", ""),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+        "duration_ms": elapsed_ms,
     }

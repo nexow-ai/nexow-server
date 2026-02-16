@@ -59,6 +59,15 @@ class SupabaseClient:
         self._client.table("agents").update({"config": config}).eq("id", agent_id).execute()
 
     # ------------------------------------------------------------------
+    # Agent Evaluations (agent-only reasoning records)
+    # ------------------------------------------------------------------
+
+    def insert_evaluation(self, evaluation: dict[str, Any]) -> dict[str, Any]:
+        """Insert an agent evaluation record (reasoning cycle)."""
+        response = self._client.table("agent_evaluations").insert(evaluation).execute()
+        return response.data[0]
+
+    # ------------------------------------------------------------------
     # Trades
     # ------------------------------------------------------------------
 

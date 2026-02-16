@@ -45,6 +45,7 @@ class SignalExecutor:
         """Run one evaluation cycle for a single bot or agent on one instrument."""
         record_id = record["id"]
         instrument = candles[0].instrument if candles else record.get("instrument", "EUR_USD")
+        is_agent = record.get("type") == "agent"
 
         try:
             strategy = self._create_strategy(record)
@@ -60,6 +61,10 @@ class SignalExecutor:
                 reason=signal.reason,
                 confidence=f"{signal.confidence:.2f}",
             )
+
+            evaluation_id: str | None = None
+            if is_agent:
+                evaluation_id = self._record_evaluation(record, signal, instrument)
 
             if signal.type == SignalType.HOLD:
                 return
@@ -83,6 +88,9 @@ class SignalExecutor:
                 "stop_loss_pct": signal.stop_loss_pct,
                 "take_profit_pct": signal.take_profit_pct,
             }
+            if evaluation_id:
+                trade_record["evaluation_id"] = evaluation_id
+
             self.db.insert_trade(trade_record)
 
             logger.info(
@@ -97,6 +105,31 @@ class SignalExecutor:
 
         except Exception as e:
             logger.error("execution_error", id=record_id, instrument=instrument, error=str(e))
+
+    def _record_evaluation(self, record: dict[str, Any], signal: Signal, instrument: str) -> str | None:
+        """Insert an agent_evaluations row and return its id."""
+        meta = signal.metadata
+        try:
+            row = self.db.insert_evaluation({
+                "agent_id": record["id"],
+                "instrument": instrument,
+                "action": signal.type.value,
+                "confidence": signal.confidence,
+                "reasoning": signal.reason,
+                "technical_summary": meta.get("technical_summary"),
+                "sentiment_summary": meta.get("sentiment_summary"),
+                "data_sources_used": meta.get("data_sources_used", []),
+                "prompt_tokens": meta.get("prompt_tokens", 0),
+                "completion_tokens": meta.get("completion_tokens", 0),
+                "total_tokens": meta.get("total_tokens", 0),
+                "llm_provider": meta.get("llm_provider"),
+                "llm_model": meta.get("llm_model"),
+                "duration_ms": meta.get("duration_ms"),
+            })
+            return row.get("id")
+        except Exception as e:
+            logger.error("evaluation_insert_error", id=record["id"][:8], error=str(e))
+            return None
 
     def _close_positions(self, record_id: str, instrument: str, current_price: float) -> None:
         open_trades = self.db.get_open_trades(record_id)

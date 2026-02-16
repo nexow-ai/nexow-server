@@ -32,6 +32,7 @@ class Signal(BaseModel):
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
     reason: str = ""
+    metadata: dict[str, Any] = {}
 
 
 class BaseStrategy(ABC):
