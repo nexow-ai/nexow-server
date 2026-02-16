@@ -1,4 +1,4 @@
-"""Portfolio agent — manages multi-instrument signal evaluation."""
+"""Portfolio manager — handles multi-instrument signal evaluation."""
 
 from __future__ import annotations
 
@@ -6,35 +6,35 @@ from typing import Any
 
 import structlog
 
-from nexow.strategies.base import AgentStrategy, Signal
-from nexow.strategies.discretionary import DiscretionaryAgent
-from nexow.strategies.systematic import SystematicAgent
+from nexow.strategies.base import BaseStrategy, Signal
+from nexow.strategies.bot import BotStrategy
+from nexow.strategies.agent import AgentStrategy
 from nexow.broker.models import Candle
 
 logger = structlog.get_logger(__name__)
 
 
-class PortfolioAgent:
+class PortfolioManager:
     """
-    Manages a portfolio of instruments for a single agent.
+    Manages a portfolio of instruments for a single bot or agent.
 
     Handles per-instrument strategy evaluation. Position sizing and
-    risk management are NOT part of this layer — agents are pure signal
-    providers compared by gross return %.
+    risk management are NOT part of this layer — bots and agents are
+    pure signal providers compared by gross return %.
     """
 
-    def __init__(self, agent: dict[str, Any]) -> None:
-        self.agent = agent
-        self.agent_id = agent["id"]
-        self.config = agent.get("config", {})
-        self.agent_type = agent.get("type", "bot")
+    def __init__(self, record: dict[str, Any]) -> None:
+        self.record = record
+        self.record_id = record["id"]
+        self.config = record.get("config", {})
+        self.record_type = record.get("type", "bot")
 
         portfolio = self.config.get("portfolio", {})
         self.instruments_config: list[dict[str, Any]] = portfolio.get(
             "instruments",
-            agent.get(
+            record.get(
                 "instruments",
-                [{"instrument": agent.get("instrument", "EUR_USD"), "timeframe": "M5"}],
+                [{"instrument": record.get("instrument", "EUR_USD"), "timeframe": "M5"}],
             ),
         )
 
@@ -48,10 +48,10 @@ class PortfolioAgent:
                 return ic.get("timeframe", "M5")
         return "M5"
 
-    def _create_strategy(self, instrument: str) -> AgentStrategy:
-        if self.agent_type == "agent":
-            return DiscretionaryAgent(self.agent_id, self.config)
-        return SystematicAgent(self.agent_id, self.config)
+    def _create_strategy(self, instrument: str) -> BaseStrategy:
+        if self.record_type == "agent":
+            return AgentStrategy(self.record_id, self.config)
+        return BotStrategy(self.record_id, self.config)
 
     async def evaluate_instrument(
         self,

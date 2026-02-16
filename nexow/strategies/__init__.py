@@ -1,15 +1,15 @@
-"""Agent strategies — systematic (rule-based) and discretionary (LLM-powered)."""
+"""Trading strategies — bots (WASM-sandboxed code) and agents (LLM-powered reasoning)."""
 
-from nexow.strategies.base import AgentStrategy, Signal, SignalType
-from nexow.strategies.systematic import SystematicAgent
-from nexow.strategies.discretionary import DiscretionaryAgent
-from nexow.strategies.portfolio import PortfolioAgent
+from nexow.strategies.base import BaseStrategy, Signal, SignalType
+from nexow.strategies.bot import BotStrategy
+from nexow.strategies.agent import AgentStrategy
+from nexow.strategies.portfolio import PortfolioManager
 
 __all__ = [
-    "AgentStrategy",
+    "BaseStrategy",
     "Signal",
     "SignalType",
-    "SystematicAgent",
-    "DiscretionaryAgent",
-    "PortfolioAgent",
+    "BotStrategy",
+    "AgentStrategy",
+    "PortfolioManager",
 ]

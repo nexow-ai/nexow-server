@@ -1,4 +1,4 @@
-"""Abstract base class for all trading agent strategies."""
+"""Abstract base class for all trading strategies (bots and agents)."""
 
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ class SignalType(str, Enum):
 
 class Signal(BaseModel):
     """
-    A trading signal emitted by an agent.
+    A trading signal emitted by a bot or agent.
 
-    Agents are pure signal providers — they emit entry/exit signals
+    Bots and agents are pure signal providers — they emit entry/exit signals
     with optional percentage-based stop-loss and take-profit levels.
     """
 
@@ -34,16 +34,15 @@ class Signal(BaseModel):
     reason: str = ""
 
 
-class AgentStrategy(ABC):
+class BaseStrategy(ABC):
     """
-    Abstract interface every agent must implement.
+    Abstract interface every strategy (bot or agent) must implement.
 
-    Agents receive candle data and their config,
-    and return a Signal indicating what action to take.
+    Receives candle data and config, returns a Signal.
     """
 
-    def __init__(self, agent_id: str, config: dict[str, Any]) -> None:
-        self.agent_id = agent_id
+    def __init__(self, strategy_id: str, config: dict[str, Any]) -> None:
+        self.strategy_id = strategy_id
         self.config = config
 
     @abstractmethod
