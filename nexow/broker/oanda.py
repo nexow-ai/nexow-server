@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 import httpx
@@ -11,6 +12,10 @@ from nexow.broker.models import Candle
 from nexow.config import settings
 
 logger = structlog.get_logger(__name__)
+
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 2.0
 
 
 class OandaClient:
@@ -30,12 +35,34 @@ class OandaClient:
         self._http = httpx.AsyncClient(
             base_url=self._base_url,
             headers=self._headers,
-            timeout=10.0,
+            timeout=30.0,
         )
 
     @property
     def account_url(self) -> str:
         return f"/v3/accounts/{self._account_id}"
+
+    async def _get_with_retry(
+        self,
+        url: str,
+        params: dict,
+    ) -> httpx.Response:
+        """GET with automatic retry on transient errors (502, 503, 429, etc.)."""
+        for attempt in range(MAX_RETRIES + 1):
+            resp = await self._http.get(url, params=params)
+            if resp.status_code not in RETRYABLE_STATUS_CODES or attempt == MAX_RETRIES:
+                resp.raise_for_status()
+                return resp
+            delay = RETRY_BASE_DELAY * (2 ** attempt)
+            logger.warning(
+                "oanda_retrying",
+                status=resp.status_code,
+                attempt=attempt + 1,
+                delay=delay,
+                url=url,
+            )
+            await asyncio.sleep(delay)
+        return resp
 
     # ------------------------------------------------------------------
     # Market Data
@@ -50,8 +77,7 @@ class OandaClient:
         """Fetch recent candles for an instrument."""
         url = f"{self.account_url}/instruments/{instrument}/candles"
         params = {"granularity": granularity, "count": count, "price": "M"}
-        resp = await self._http.get(url, params=params)
-        resp.raise_for_status()
+        resp = await self._get_with_retry(url, params)
         data = resp.json()
 
         candles: list[Candle] = []
@@ -96,8 +122,7 @@ class OandaClient:
                 "from": cursor.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "count": 5000,
             }
-            resp = await self._http.get(url, params=params)
-            resp.raise_for_status()
+            resp = await self._get_with_retry(url, params)
             data = resp.json()
 
             raw_candles = data.get("candles", [])
