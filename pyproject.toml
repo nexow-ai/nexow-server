@@ -13,10 +13,8 @@ dependencies = [
     "supabase>=2.0",
     # Cache / pub-sub
     "redis>=5.0",
-    # Data / ML
-    "pandas>=2.0",
-    "numpy>=1.26",
-    "ta>=0.11",
+    # Data
+    "polars>=1.0",
     # LLM
     "pydantic-ai>=0.0.14",
     "langgraph>=0.2",
