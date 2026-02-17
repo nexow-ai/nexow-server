@@ -1,0 +1,58 @@
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    restart: unless-stopped
+
+  sandbox:
+    build:
+      context: ./sandbox
+    restart: unless-stopped
+    environment:
+      - SANDBOX_PORT=3001
+      - SANDBOX_POOL_SIZE=4
+
+  api:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - sandbox
+    environment:
+      - PORT=8000
+      - REDIS_URL=redis://redis:6379
+      - SANDBOX_URL=http://sandbox:3001
+      # set this to your frontend domain on the VPS (e.g. ["https://nexow.ai"])
+      # - CORS_ORIGINS=["https://nexow.ai"]
+    volumes:
+      # keep secrets on the server; do not bake into image
+      - ./.env:/app/.env:ro
+    command: ["uvicorn", "nexow.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  worker:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - sandbox
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - SANDBOX_URL=http://sandbox:3001
+    volumes:
+      - ./.env:/app/.env:ro
+    command: ["python", "-m", "nexow.worker"]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    profiles: ["edge"]
+    depends_on:
+      - api
+    ports:
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Put your Cloudflare Origin cert + key on the VPS at ./deploy/certs/
+      - ./deploy/certs:/certs:ro
