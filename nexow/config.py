@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     tick_interval_seconds: int = 5
     pending_check_interval_seconds: int = 10
     max_concurrent_evaluations: int = 20
+    claim_lock_min_ttl_seconds: int = 60
 
     # --- WASM Sandbox ---
     sandbox_url: str = Field(
