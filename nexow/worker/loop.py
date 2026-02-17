@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import uuid
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -16,7 +18,9 @@ from nexow.config import settings
 from nexow.db.client import SupabaseClient
 from nexow.strategies.portfolio import PortfolioManager
 from nexow.worker.cache import MarketCache
+from nexow.worker.claim_lock import ClaimKey, ClaimLock
 from nexow.worker.executor import SignalExecutor
+from nexow.worker.scheduling import granularity_seconds, normalize_granularity
 
 logger = structlog.get_logger(__name__)
 
@@ -46,9 +50,16 @@ class WorkerLoop:
 
         self._pending_task: asyncio.Task | None = None
         self._price_sub_task: asyncio.Task | None = None
+        self._claim_redis: aioredis.Redis | None = None
+        self._claim_lock: ClaimLock | None = None
+        self._last_eval_candle_ts: dict[str, float] = {}
+        self._worker_id = os.getenv("FLY_MACHINE_ID") or str(uuid.uuid4())
 
     async def start(self) -> None:
         self._running = True
+
+        self._claim_redis = aioredis.from_url(settings.redis_url, decode_responses=True)
+        self._claim_lock = ClaimLock(self._claim_redis, owner_id=self._worker_id)
 
         self._pending_task = asyncio.create_task(self._pending_loop())
         self._price_sub_task = asyncio.create_task(self._subscribe_prices())
@@ -75,6 +86,11 @@ class WorkerLoop:
                 except asyncio.CancelledError:
                     pass
 
+        if self._claim_redis:
+            try:
+                await self._claim_redis.aclose()
+            except Exception:
+                pass
         await self.market.close()
         logger.info("worker_stopped")
 
@@ -181,48 +197,89 @@ class WorkerLoop:
         if not agents:
             return
 
+        # Build all (instrument, timeframe) pairs we actually need to evaluate.
+        eval_targets: list[tuple[dict, str, str]] = []
         all_instrument_configs: list[dict[str, Any]] = []
-        agent_portfolios: list[tuple[dict, PortfolioManager]] = []
 
         for agent in agents:
             try:
                 portfolio = PortfolioManager(agent)
-                agent_portfolios.append((agent, portfolio))
-                all_instrument_configs.extend(portfolio.instruments_config)
+                for inst_cfg in portfolio.instruments_config:
+                    instrument = inst_cfg["instrument"]
+                    timeframe = self._effective_timeframe(agent, inst_cfg)
+                    eval_targets.append((agent, instrument, timeframe))
+                    all_instrument_configs.append({"instrument": instrument, "timeframe": timeframe})
             except Exception as e:
                 logger.error("portfolio_init_error", agent_id=agent.get("id", "?"), error=str(e))
 
         await self.cache.prefetch(all_instrument_configs)
 
-        tasks = [self._evaluate_agent(agent, portfolio) for agent, portfolio in agent_portfolios]
+        tasks = [self._evaluate_one(agent, instrument, timeframe) for agent, instrument, timeframe in eval_targets]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for (agent, _), result in zip(agent_portfolios, results):
+        for (agent, instrument, timeframe), result in zip(eval_targets, results):
             if isinstance(result, Exception):
-                logger.error("agent_eval_unhandled", agent_id=agent.get("id", "?"), error=str(result))
+                logger.error(
+                    "agent_eval_unhandled",
+                    agent_id=agent.get("id", "?"),
+                    instrument=instrument,
+                    timeframe=timeframe,
+                    error=str(result),
+                )
 
         self.cache.clear_candles()
         logger.debug("tick_complete", active_agents=len(agents), evaluated=len(tasks))
 
-    async def _evaluate_agent(self, agent: dict, portfolio: PortfolioManager) -> None:
+    def _effective_timeframe(self, agent: dict, inst_cfg: dict[str, Any]) -> str:
+        """Choose which candle timeframe drives evaluation for this agent/bot.
+
+        - Bots: use the instrument timeframe in the portfolio config.
+        - Agents: use `evaluation_schedule` (top-level or config) when present,
+          otherwise use the instrument timeframe.
+        """
+        tf = inst_cfg.get("timeframe", "M5")
+        if agent.get("type") == "agent":
+            schedule = agent.get("evaluation_schedule") or agent.get("config", {}).get("evaluation_schedule")
+            schedule_tf = normalize_granularity(schedule)
+            if schedule_tf:
+                return schedule_tf
+        return normalize_granularity(tf) or tf
+
+    async def _evaluate_one(self, agent: dict, instrument: str, timeframe: str) -> None:
         async with self._eval_semaphore:
-            for inst_config in portfolio.instruments_config:
-                instrument = inst_config["instrument"]
-                timeframe = inst_config.get("timeframe", "M5")
+            candles = self.cache.get_candles(instrument, timeframe)
+            price = self.cache.get_price(instrument)
 
-                schedule = agent.get("evaluation_schedule", "every_tick")
-                if schedule != "every_tick" and agent.get("type") == "agent":
-                    continue
+            if candles is None or price is None or not candles:
+                logger.debug(
+                    "cache_miss_skipping",
+                    agent_id=agent["id"][:8],
+                    instrument=instrument,
+                    timeframe=timeframe,
+                )
+                return
 
-                candles = self.cache.get_candles(instrument, timeframe)
-                price = self.cache.get_price(instrument)
+            latest_ts = candles[-1].time.timestamp()
+            last_key = f"{agent['id']}:{instrument}:{timeframe}"
+            last_seen = self._last_eval_candle_ts.get(last_key, 0.0)
+            if latest_ts <= last_seen:
+                return
 
-                if candles is None or price is None:
-                    logger.warning("cache_miss_skipping", agent_id=agent["id"][:8],
-                                   instrument=instrument, timeframe=timeframe)
-                    continue
+            # Cross-worker claim/lock: one evaluation per candle per agent.
+            if not self._claim_lock:
+                return
+            ttl = max(settings.claim_lock_min_ttl_seconds, granularity_seconds(timeframe))
+            claim = ClaimKey(
+                agent_id=agent["id"],
+                instrument=instrument,
+                timeframe=timeframe,
+                candle_ts=int(latest_ts),
+            )
+            if not await self._claim_lock.try_claim(claim, ttl_seconds=ttl):
+                return
 
-                await self.executor.execute(agent, candles, price)
+            await self.executor.execute(agent, candles, price)
+            self._last_eval_candle_ts[last_key] = latest_ts
 
     # ------------------------------------------------------------------
     # SL/TP sync
