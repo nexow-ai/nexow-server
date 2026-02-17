@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     )
 
     # --- CORS ---
-    cors_origins: list[str] = ["*"]
+    cors_origins: list[str] = []
 
 
 settings = Settings()
