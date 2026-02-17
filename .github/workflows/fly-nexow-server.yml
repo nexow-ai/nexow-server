@@ -3,8 +3,6 @@ name: Deploy nexow-server to Fly.io
 on:
   push:
     branches: [main]
-    paths:
-      - "nexow-server/**"
 
 jobs:
   deploy:
@@ -16,6 +14,6 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Deploy to Fly.io
-        run: flyctl deploy nexow-server --remote-only
+        run: flyctl deploy --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
