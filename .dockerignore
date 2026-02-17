@@ -67,3 +67,6 @@ supabase/.temp/
 *.cert
 credentials.json
 secrets.yaml
+
+# Explicitly include (required for Dockerfile)
+!uv.lock
