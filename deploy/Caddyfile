@@ -1,0 +1,13 @@
+{
+	# We're typically behind Cloudflare; use origin certs (mounted) and disable ACME.
+	auto_https off
+}
+
+:443 {
+	tls /certs/cert.pem /certs/key.pem
+
+	encode zstd gzip
+
+	# API + WebSockets
+	reverse_proxy api:8000
+}
