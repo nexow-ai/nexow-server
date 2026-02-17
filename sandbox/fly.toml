@@ -1,0 +1,20 @@
+app = "nexow-sandbox"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Pyodide is memory-heavy; start small and scale up if needed.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1024mb"
+
+[env]
+  SANDBOX_PORT = "3001"
+  SANDBOX_POOL_SIZE = "1"
+
+[processes]
+  app = "pnpm start"
+
+# No public service: this app is meant to be reached over Fly private networking
+# from `nexow-server` using `http://nexow-sandbox.internal:3001`.

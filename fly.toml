@@ -1,0 +1,39 @@
+app = "nexow-server"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Avoid OOM on the default 256MB Machines (FastAPI + deps).
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[env]
+  PORT = "8000"
+  # Point this at your sandbox Fly app (internal DNS):
+  # SANDBOX_URL = "http://nexow-sandbox.internal:3001"
+  #
+  # Point this at your Redis (Upstash/Fly Redis):
+  # REDIS_URL = "redis://..."
+
+[processes]
+  api = "uvicorn nexow.api.app:app --host 0.0.0.0 --port 8000"
+  worker = "python -m nexow.worker"
+  poller = "python -m nexow.poller"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  # Keep this at 0 to avoid automatic HA (2x api machines) for lowest cost.
+  min_machines_running = 0
+  processes = ["api"]
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/health"

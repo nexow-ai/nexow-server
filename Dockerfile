@@ -22,11 +22,8 @@ ENV VIRTUAL_ENV=/app/.venv \
     PATH="/app/.venv/bin:${PATH}"
 
 # Copy source
-COPY server ./server
+COPY nexow ./nexow
 COPY supabase ./supabase
-
-# Ensure "nexow" import path exists (repo uses symlink locally)
-RUN ln -s server nexow
 
 EXPOSE 8000
 

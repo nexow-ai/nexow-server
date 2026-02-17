@@ -10,7 +10,7 @@ services:
     restart: unless-stopped
     environment:
       - SANDBOX_PORT=3001
-      - SANDBOX_POOL_SIZE=4
+      - SANDBOX_POOL_SIZE=1
 
   api:
     build:
@@ -28,7 +28,8 @@ services:
     volumes:
       # keep secrets on the server; do not bake into image
       - ./.env:/app/.env:ro
-    command: ["uvicorn", "nexow.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    command:
+      ["uvicorn", "nexow.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
 
   worker:
     build:
@@ -43,6 +44,18 @@ services:
     volumes:
       - ./.env:/app/.env:ro
     command: ["python", "-m", "nexow.worker"]
+
+  poller:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./.env:/app/.env:ro
+    command: ["python", "-m", "nexow.poller"]
 
   caddy:
     image: caddy:2-alpine
