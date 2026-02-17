@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from server.ai.lab_architect import LabRequest, process_lab_message
+from nexow.ai.lab_architect import LabRequest, process_lab_message
 
 router = APIRouter(prefix="/api/labs", tags=["labs"])
 

@@ -14,9 +14,9 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
-from server.ai.code_validator import CodeValidationError, sanitize_strategy_code, validate_strategy_code
-from server.ai.schemas import BotGenerationResult
-from server.config import settings
+from nexow.ai.code_validator import CodeValidationError, sanitize_strategy_code, validate_strategy_code
+from nexow.ai.schemas import BotGenerationResult
+from nexow.config import settings
 
 logger = structlog.get_logger(__name__)
 

@@ -3,8 +3,8 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from server.ai.factory import generate_agent
-from server.db.client import SupabaseClient
+from nexow.ai.factory import generate_agent
+from nexow.db.client import SupabaseClient
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 

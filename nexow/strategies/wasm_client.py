@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 import structlog
 
-from server.config import settings
+from nexow.config import settings
 
 logger = structlog.get_logger(__name__)
 

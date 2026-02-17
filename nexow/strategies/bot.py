@@ -6,8 +6,8 @@ from typing import Any
 
 import structlog
 
-from server.strategies.base import BaseStrategy, Signal, SignalType
-from server.broker.models import Candle
+from nexow.strategies.base import BaseStrategy, Signal, SignalType
+from nexow.broker.models import Candle
 
 logger = structlog.get_logger(__name__)
 
@@ -74,8 +74,8 @@ class BotStrategy(BaseStrategy):
 
     async def _execute(self, candles: list[Candle], current_price: float) -> str:
         """Execute strategy code in the WASM sandbox."""
-        from server.strategies.wasm_client import execute_strategy
-        from server.db.client import SupabaseClient
+        from nexow.strategies.wasm_client import execute_strategy
+        from nexow.db.client import SupabaseClient
 
         candle_dicts = [
             {

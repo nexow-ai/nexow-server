@@ -7,42 +7,38 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from server.api.routes import health, data, agents, bots, backtest, labs
-from server.api.ws import router as ws_router, _redis_relay
-from server.config import settings
-from server.worker.poller import MarketDataPoller
+from nexow.api.routes import health, data, agents, bots, backtest, labs
+from nexow.api.ws import router as ws_router, _redis_relay
+from nexow.config import settings
 
 logger = structlog.get_logger(__name__)
 
-poller: MarketDataPoller | None = None
-poller_task: asyncio.Task | None = None
 relay_task: asyncio.Task | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage application lifecycle — start poller + WS relay on startup."""
-    global poller, poller_task, relay_task
+    """Manage application lifecycle — start WS relay on startup.
+
+    NOTE: Market data polling runs as a separate process (`python -m nexow.poller`)
+    so you can scale API replicas on Fly.io without duplicating pollers.
+    """
+    global relay_task
 
     logger.info("nexow_server_starting", environment=settings.environment)
 
-    poller = MarketDataPoller()
-    poller_task = asyncio.create_task(poller.start())
     relay_task = asyncio.create_task(_redis_relay())
 
     logger.info("nexow_server_started", port=settings.port)
     yield
 
     logger.info("nexow_server_stopping")
-    if poller:
-        await poller.stop()
-    for task in (poller_task, relay_task):
-        if task:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+    if relay_task:
+        relay_task.cancel()
+        try:
+            await relay_task
+        except asyncio.CancelledError:
+            pass
     logger.info("nexow_server_stopped")
 
 
