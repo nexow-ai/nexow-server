@@ -27,11 +27,18 @@ const app = Fastify({ logger: true });
 
 // Health check
 app.get("/health", async () => {
-  return { ok: true, pool: pool.status };
+  return { ok: pool.status.ready, pool: pool.status };
 });
 
 // Execute strategy code
 app.post<{ Body: ExecuteRequest }>("/execute", async (request, reply) => {
+  if (!pool.status.ready) {
+    return reply.status(503).send({
+      action: "hold",
+      error: "Sandbox warming up. Try again shortly.",
+    });
+  }
+
   const body = request.body;
 
   if (!body.code || !body.candles || body.current_price == null) {
@@ -61,11 +68,17 @@ app.post<{ Body: ExecuteRequest }>("/execute", async (request, reply) => {
 // ── Start ─────────────────────────────────────────────────
 
 async function main() {
-  console.log("[sandbox] Initializing Pyodide pool...");
-  await pool.init();
-
   await app.listen({ port: PORT, host: "0.0.0.0" });
   console.log(`[sandbox] Listening on http://0.0.0.0:${PORT}`);
+
+  // Warm the pool in the background so health checks come up immediately.
+  console.log("[sandbox] Initializing Pyodide pool...");
+  pool
+    .init()
+    .catch((err) => {
+      console.error("[sandbox] Pool init failed:", err);
+      process.exit(1);
+    });
 }
 
 main().catch((err) => {
