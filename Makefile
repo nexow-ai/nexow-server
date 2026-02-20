@@ -12,11 +12,7 @@ sandbox:  ## Start the WASM sandbox sidecar
 	cd sandbox && pnpm run dev
 
 dev:  ## Start API + worker + sandbox together (Ctrl+C stops all)
-	@trap 'kill 0' EXIT; \
-	uv run uvicorn nexow.api.app:app --host 0.0.0.0 --port 8000 --reload & \
-	uv run python -m nexow.worker & \
-	(cd sandbox && pnpm run dev) & \
-	wait
+	@bash "$(CURDIR)/scripts/dev.sh"
 
 # ── Setup ────────────────────────────────────────────────
 
