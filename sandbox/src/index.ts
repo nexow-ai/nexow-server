@@ -73,12 +73,10 @@ async function main() {
 
   // Warm the pool in the background so health checks come up immediately.
   console.log("[sandbox] Initializing Pyodide pool...");
-  pool
-    .init()
-    .catch((err) => {
-      console.error("[sandbox] Pool init failed:", err);
-      process.exit(1);
-    });
+  pool.init().catch((err) => {
+    console.error("[sandbox] Pool init failed:", err);
+    process.exit(1);
+  });
 }
 
 main().catch((err) => {

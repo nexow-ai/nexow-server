@@ -16,5 +16,19 @@ primary_region = "fra"
 [processes]
   app = "pnpm start"
 
-# No public service: this app is meant to be reached over Fly private networking
-# from `nexow-server` using `http://nexow-sandbox.internal:3001`.
+# HTTP service so Fly keeps at least one machine running and can route traffic.
+# nexow-server should use SANDBOX_URL=http://nexow-sandbox.internal:3001 (private).
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/health"
