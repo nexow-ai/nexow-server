@@ -1,4 +1,4 @@
-.PHONY: api worker sandbox dev install lint format test clean
+.PHONY: api worker sandbox dev install lint lint-fix format fix test clean
 
 # ── Run ──────────────────────────────────────────────────
 
@@ -27,11 +27,16 @@ env:  ## Create .env from sample
 
 # ── Quality ──────────────────────────────────────────────
 
-lint:  ## Run linter
+lint:  ## Run linter (check only)
 	uv run ruff check nexow/
+
+lint-fix:  ## Run linter with auto-fix
+	uv run ruff check nexow/ --fix
 
 format:  ## Auto-format code
 	uv run ruff format nexow/
+
+fix: format lint-fix  ## Format + lint with auto-fix
 
 test:  ## Run tests
 	uv run pytest -v

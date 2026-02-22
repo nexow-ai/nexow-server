@@ -45,3 +45,20 @@ packages = ["nexow"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+exclude = [".venv", "venv", "__pycache__", ".git", "build", "dist"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # Pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # bugbear
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+skip-magic-trailing-comma = false
