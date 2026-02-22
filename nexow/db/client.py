@@ -39,6 +39,19 @@ class SupabaseClient:
         )
         return response.data
 
+    def insert_agent_log(
+        self, agent_id: str, level: str, message: str, metadata: dict[str, Any] | None = None
+    ) -> None:
+        """Insert a log entry for the agent console (real-time display)."""
+        self._client.table("agent_logs").insert(
+            {
+                "agent_id": agent_id,
+                "level": level,
+                "message": message,
+                "metadata": metadata or {},
+            }
+        ).execute()
+
     def get_agent_by_id(self, agent_id: str) -> dict[str, Any] | None:
         """Fetch a single agent by ID."""
         response = (
