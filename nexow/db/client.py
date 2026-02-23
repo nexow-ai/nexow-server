@@ -218,6 +218,50 @@ class SupabaseClient:
         query = query.order("ts", desc=True).limit(limit)
         return query.execute().data
 
+    def get_forex_prices_bulk(
+        self, instrument: str, from_ts: str, batch_size: int = 5000,
+    ) -> list[dict[str, Any]]:
+        """Fetch all M1 bars from from_ts, paginating in batches. Ordered ASC."""
+        all_rows: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            resp = (
+                self._client.table("forex_prices_1m")
+                .select("ts,open,high,low,close,volume")
+                .eq("instrument", instrument)
+                .gte("ts", from_ts)
+                .order("ts")
+                .range(offset, offset + batch_size - 1)
+                .execute()
+            )
+            all_rows.extend(resp.data)
+            if len(resp.data) < batch_size:
+                break
+            offset += batch_size
+        return all_rows
+
+    # ------------------------------------------------------------------
+    # Snapshot Analyses (LLM scoring)
+    # ------------------------------------------------------------------
+
+    def upsert_snapshot_analysis(self, analysis: dict[str, Any]) -> None:
+        """Upsert a snapshot analysis (deduplicates on instrument+timestamp)."""
+        self._client.table("snapshot_analyses").upsert(
+            analysis, on_conflict="instrument,timestamp"
+        ).execute()
+
+    def get_latest_analysis(self, instrument: str) -> dict[str, Any] | None:
+        """Get the most recent analysis for an instrument."""
+        resp = (
+            self._client.table("snapshot_analyses")
+            .select("*")
+            .eq("instrument", instrument)
+            .order("timestamp", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return resp.data[0] if resp.data else None
+
     # ------------------------------------------------------------------
     # Agent prompts (pending generation)
     # ------------------------------------------------------------------

@@ -18,7 +18,9 @@ import structlog
 
 from nexow.broker.oanda import OandaClient
 from nexow.db.client import SupabaseClient
+from nexow.snapshot.analyzer import analyze_snapshot
 from nexow.snapshot.prices import download_minute_aggs, fetch_oanda_minute_bars
+from nexow.snapshot.service import SnapshotService
 
 logger = structlog.get_logger(__name__)
 
@@ -65,7 +67,10 @@ async def _ingest_flat_file(db: SupabaseClient, instrument: str, target_date: da
     return True
 
 
-async def _fill_oanda_gap(db: SupabaseClient, oanda: OandaClient, instrument: str) -> int:
+async def _fill_oanda_gap(
+    db: SupabaseClient, oanda: OandaClient, instrument: str,
+    snapshot_svc: SnapshotService | None = None,
+) -> int:
     """Fetch Oanda M1 from the last known bar to now. Returns rows inserted."""
     latest_ts = db.get_latest_price_ts(instrument)
 
@@ -80,14 +85,25 @@ async def _fill_oanda_gap(db: SupabaseClient, oanda: OandaClient, instrument: st
         return 0  # Already up to date
 
     rows = await fetch_oanda_minute_bars(instrument, from_time, oanda=oanda)
-    return await _upsert_batch(db, rows)
+    count = await _upsert_batch(db, rows)
+
+    # Feed latest bar to snapshot service
+    if snapshot_svc and rows:
+        await snapshot_svc.on_new_bar(instrument, rows[-1])
+
+    return count
 
 
-async def run_prices_loop() -> None:
+async def run_prices_loop(snapshot_svc: SnapshotService | None = None) -> None:
     """Main loop — every minute, manage flat file ingestion + Oanda fill."""
     db = SupabaseClient()
     oanda = OandaClient()
     flat_file_done: dict[str, date] = {}  # instrument -> last flat file date ingested
+
+    # Start snapshot service
+    if snapshot_svc is None:
+        snapshot_svc = SnapshotService(db=db)
+    await snapshot_svc.start(INSTRUMENTS)
 
     logger.info("prices_runner_started", instruments=INSTRUMENTS)
 
@@ -104,9 +120,23 @@ async def run_prices_loop() -> None:
                         flat_file_done[instrument] = yesterday
 
                 # Step 2: Fill gap from last bar to now with Oanda
-                filled = await _fill_oanda_gap(db, oanda, instrument)
+                filled = await _fill_oanda_gap(db, oanda, instrument, snapshot_svc)
                 if filled:
                     logger.info("oanda_gap_filled", instrument=instrument, rows=filled)
+
+                # Step 3: Run LLM analysis on the latest snapshot
+                snapshot_data = await snapshot_svc.get_snapshot(instrument)
+                if snapshot_data:
+                    try:
+                        import json
+                        await analyze_snapshot(
+                            snapshot_json=json.dumps(snapshot_data),
+                            instrument=instrument,
+                            timestamp=snapshot_data.get("timestamp", now.isoformat()),
+                            db=db,
+                        )
+                    except Exception as e:
+                        logger.warning("analyzer_failed", instrument=instrument, error=str(e))
 
         except Exception as e:
             logger.error("prices_loop_error", error=str(e))

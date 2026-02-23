@@ -141,6 +141,39 @@ async def get_economic_calendar(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/snapshot/{instrument}")
+async def get_snapshot(instrument: str):
+    """Get the latest market snapshot for an instrument.
+
+    Tries Redis cache first; if empty, computes on-the-fly from DB data.
+    """
+    try:
+        from nexow.snapshot.redis_store import SnapshotRedisStore
+
+        store = SnapshotRedisStore()
+        await store.connect()
+        snapshot = await store.get_snapshot(instrument)
+        await store.close()
+
+        if snapshot is not None:
+            return snapshot
+
+        # Fallback: compute on-the-fly
+        from nexow.snapshot.service import SnapshotService
+
+        svc = SnapshotService()
+        await svc._load_history(instrument)
+        df = svc._dataframes.get(instrument)
+        if df is None or df.height < 50:
+            raise HTTPException(status_code=404, detail="Not enough price data to build snapshot.")
+        result = svc._build_snapshot(instrument, df)
+        return result.model_dump()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/instruments")
 async def get_instruments():
     """Get all available instruments from Oanda (raw)."""
