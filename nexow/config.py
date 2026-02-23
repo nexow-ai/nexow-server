@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     oanda_account_id: str = ""
     oanda_api_token: str = ""
 
+    # --- IG ---
+    ig_api_url: str = "https://demo-api.ig.com"
+    ig_api_key: str = Field(default="", validation_alias="IG_API_TOKEN")
+    ig_username: str = ""
+    ig_password: str = ""
+
     # --- Redis ---
     redis_url: str = "redis://localhost:6379"
     redis_channel: str = "nexow:market:prices"
