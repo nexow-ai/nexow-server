@@ -147,6 +147,78 @@ class SupabaseClient:
         return response.data
 
     # ------------------------------------------------------------------
+    # Economic Events (Forex Factory calendar)
+    # ------------------------------------------------------------------
+
+    def upsert_economic_event(self, event: dict[str, Any]) -> None:
+        """Upsert an economic event (deduplicates on date+currency+event)."""
+        self._client.table("economic_events").upsert(
+            event, on_conflict="date,currency,event"
+        ).execute()
+
+    def get_economic_events(self, target_date: str | None = None, currency: str | None = None) -> list[dict[str, Any]]:
+        """Fetch economic events, optionally filtered by date and/or currency."""
+        query = self._client.table("economic_events").select("*")
+        if target_date:
+            query = query.eq("date", target_date)
+        if currency:
+            query = query.eq("currency", currency)
+        query = query.order("date", desc=True).order("time")
+        return query.execute().data
+
+    # ------------------------------------------------------------------
+    # Forex Prices 1m (Massive flat files)
+    # ------------------------------------------------------------------
+
+    def upsert_forex_prices(self, rows: list[dict[str, Any]]) -> None:
+        """Bulk upsert minute price bars (deduplicates on instrument+ts)."""
+        self._client.table("forex_prices_1m").upsert(
+            rows, on_conflict="instrument,ts"
+        ).execute()
+
+    def delete_oanda_prices(self, instrument: str, target_date: str) -> None:
+        """Delete all oanda-sourced rows for a given instrument and date.
+
+        Used when a Massive flat file arrives to replace provisional Oanda data.
+        """
+        # Delete where source=oanda AND ts falls within the target date
+        start = f"{target_date}T00:00:00+00:00"
+        end = f"{target_date}T23:59:59+00:00"
+        self._client.table("forex_prices_1m") \
+            .delete() \
+            .eq("instrument", instrument) \
+            .eq("source", "oanda") \
+            .gte("ts", start) \
+            .lte("ts", end) \
+            .execute()
+
+    def get_latest_price_ts(self, instrument: str) -> str | None:
+        """Get the timestamp of the most recent price bar for an instrument."""
+        resp = (
+            self._client.table("forex_prices_1m")
+            .select("ts")
+            .eq("instrument", instrument)
+            .order("ts", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if resp.data:
+            return resp.data[0]["ts"]
+        return None
+
+    def get_forex_prices(
+        self, instrument: str, from_ts: str | None = None, to_ts: str | None = None, limit: int = 1440,
+    ) -> list[dict[str, Any]]:
+        """Fetch minute price bars for an instrument."""
+        query = self._client.table("forex_prices_1m").select("*").eq("instrument", instrument)
+        if from_ts:
+            query = query.gte("ts", from_ts)
+        if to_ts:
+            query = query.lte("ts", to_ts)
+        query = query.order("ts", desc=True).limit(limit)
+        return query.execute().data
+
+    # ------------------------------------------------------------------
     # Agent prompts (pending generation)
     # ------------------------------------------------------------------
 
