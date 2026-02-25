@@ -57,6 +57,18 @@ services:
       - ./.env:/app/.env:ro
     command: ["python", "-m", "nexow.poller"]
 
+  snapshot:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./.env:/app/.env:ro
+    command: ["python", "-m", "nexow.snapshot"]
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

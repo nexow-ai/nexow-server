@@ -16,7 +16,9 @@ from nexow.ai.factory import generate_agent
 from nexow.broker.oanda import OandaClient
 from nexow.config import settings
 from nexow.db.client import SupabaseClient
+from nexow.strategies.base import SignalType
 from nexow.strategies.portfolio import PortfolioManager
+from nexow.strategies.reactor import ReactorStrategy
 from nexow.worker.cache import MarketCache
 from nexow.worker.claim_lock import ClaimKey, ClaimLock
 from nexow.worker.executor import SignalExecutor
@@ -193,14 +195,12 @@ class WorkerLoop:
     async def _tick(self) -> None:
         await self._sync_trades()
 
-        agents = self.db.get_active_agents()
-        if not agents:
-            return
-
-        # Build all (instrument, timeframe) pairs we actually need to evaluate.
+        # Build all (instrument, timeframe) pairs we need to evaluate.
         eval_targets: list[tuple[dict, str, str]] = []
         all_instrument_configs: list[dict[str, Any]] = []
 
+        # ----- Agents / Bots -----
+        agents = self.db.get_active_agents()
         for agent in agents:
             try:
                 portfolio = PortfolioManager(agent)
@@ -212,23 +212,52 @@ class WorkerLoop:
             except Exception as e:
                 logger.error("portfolio_init_error", agent_id=agent.get("id", "?"), error=str(e))
 
+        # ----- Reactor configs -----
+        reactor_configs = self.db.get_active_reactor_configs()
+        reactor_targets: list[tuple[dict, str, str]] = []
+        for rc in reactor_configs:
+            instrument = rc.get("instrument", "EUR_USD")
+            timeframe = normalize_granularity(rc.get("timeframe", "H1")) or "H1"
+            reactor_targets.append((rc, instrument, timeframe))
+            all_instrument_configs.append({"instrument": instrument, "timeframe": timeframe})
+
+        if not eval_targets and not reactor_targets:
+            return
+
         await self.cache.prefetch(all_instrument_configs)
 
-        tasks = [self._evaluate_one(agent, instrument, timeframe) for agent, instrument, timeframe in eval_targets]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Evaluate agents
+        if eval_targets:
+            tasks = [self._evaluate_one(agent, instrument, timeframe) for agent, instrument, timeframe in eval_targets]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for (agent, instrument, timeframe), result in zip(eval_targets, results):
+                if isinstance(result, Exception):
+                    logger.error(
+                        "agent_eval_unhandled",
+                        agent_id=agent.get("id", "?"),
+                        instrument=instrument,
+                        timeframe=timeframe,
+                        error=str(result),
+                    )
 
-        for (agent, instrument, timeframe), result in zip(eval_targets, results):
-            if isinstance(result, Exception):
-                logger.error(
-                    "agent_eval_unhandled",
-                    agent_id=agent.get("id", "?"),
-                    instrument=instrument,
-                    timeframe=timeframe,
-                    error=str(result),
-                )
+        # Evaluate reactors
+        if reactor_targets:
+            reactor_tasks = [
+                self._evaluate_reactor(rc, instrument, timeframe)
+                for rc, instrument, timeframe in reactor_targets
+            ]
+            reactor_results = await asyncio.gather(*reactor_tasks, return_exceptions=True)
+            for (rc, instrument, timeframe), result in zip(reactor_targets, reactor_results):
+                if isinstance(result, Exception):
+                    logger.error(
+                        "reactor_eval_unhandled",
+                        reactor_id=rc.get("id", "?")[:8],
+                        instrument=instrument,
+                        error=str(result),
+                    )
 
         self.cache.clear_candles()
-        logger.debug("tick_complete", active_agents=len(agents), evaluated=len(tasks))
+        logger.debug("tick_complete", active_agents=len(agents), reactors=len(reactor_configs))
 
     def _effective_timeframe(self, agent: dict, inst_cfg: dict[str, Any]) -> str:
         """Choose which candle timeframe drives evaluation for this agent/bot.
@@ -280,6 +309,70 @@ class WorkerLoop:
 
             await self.executor.execute(agent, candles, price)
             self._last_eval_candle_ts[last_key] = latest_ts
+
+    async def _evaluate_reactor(self, config: dict, instrument: str, timeframe: str) -> None:
+        """Evaluate a single reactor config against snapshot analyses."""
+        async with self._eval_semaphore:
+            candles = self.cache.get_candles(instrument, timeframe)
+            price = self.cache.get_price(instrument)
+
+            if candles is None or price is None or not candles:
+                return
+
+            # Same candle-dedup logic as agents
+            latest_ts = candles[-1].time.timestamp()
+            last_key = f"reactor:{config['id']}:{instrument}:{timeframe}"
+            last_seen = self._last_eval_candle_ts.get(last_key, 0.0)
+            if latest_ts <= last_seen:
+                return
+
+            # Cross-worker claim lock
+            if not self._claim_lock:
+                return
+            ttl = max(settings.claim_lock_min_ttl_seconds, granularity_seconds(timeframe))
+            claim = ClaimKey(
+                agent_id=f"reactor:{config['id']}",
+                instrument=instrument,
+                timeframe=timeframe,
+                candle_ts=int(latest_ts),
+            )
+            if not await self._claim_lock.try_claim(claim, ttl_seconds=ttl):
+                return
+
+            strategy = ReactorStrategy(config, self.db)
+            signal = strategy.evaluate(candles, price)
+
+            logger.info(
+                "reactor_signal",
+                reactor_id=config["id"][:8],
+                instrument=instrument,
+                signal=signal.type.value,
+                confidence=f"{signal.confidence:.3f}",
+                reason=signal.reason,
+            )
+
+            self._last_eval_candle_ts[last_key] = latest_ts
+
+            if signal.type in (SignalType.BUY, SignalType.SELL):
+                trade_record = {
+                    "reactor_config_id": config["id"],
+                    "instrument": instrument,
+                    "direction": signal.type.value,
+                    "entry_price": price,
+                    "status": "open",
+                    "stop_loss_pct": signal.stop_loss_pct,
+                    "take_profit_pct": signal.take_profit_pct,
+                }
+                self.db.insert_reactor_trade(trade_record)
+                logger.info(
+                    "reactor_trade_opened",
+                    reactor_id=config["id"][:8],
+                    instrument=instrument,
+                    direction=signal.type.value,
+                    entry_price=price,
+                    sl_pct=signal.stop_loss_pct,
+                    tp_pct=signal.take_profit_pct,
+                )
 
     # ------------------------------------------------------------------
     # SL/TP sync

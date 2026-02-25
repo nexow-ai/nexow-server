@@ -262,6 +262,77 @@ class SupabaseClient:
         )
         return resp.data[0] if resp.data else None
 
+    def get_recent_analyses(self, instrument: str, limit: int = 120) -> list[dict[str, Any]]:
+        """Fetch the N most recent analyses for an instrument (DESC order)."""
+        resp = (
+            self._client.table("snapshot_analyses")
+            .select("*")
+            .eq("instrument", instrument)
+            .order("timestamp", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return resp.data or []
+
+    def get_analyses_in_range(
+        self, instrument: str, from_ts: str, to_ts: str,
+    ) -> list[dict[str, Any]]:
+        """Fetch analyses within a time range [from_ts, to_ts), ordered ASC."""
+        resp = (
+            self._client.table("snapshot_analyses")
+            .select("*")
+            .eq("instrument", instrument)
+            .gte("timestamp", from_ts)
+            .lt("timestamp", to_ts)
+            .order("timestamp")
+            .execute()
+        )
+        return resp.data or []
+
+    # ------------------------------------------------------------------
+    # Reactor configs
+    # ------------------------------------------------------------------
+
+    def get_active_reactor_configs(self) -> list[dict[str, Any]]:
+        """Fetch all reactor configs with is_active=true."""
+        response = (
+            self._client.table("reactor_configs")
+            .select("*")
+            .eq("is_active", True)
+            .execute()
+        )
+        return response.data or []
+
+    def get_reactor_open_trades(self, reactor_config_id: str) -> list[dict[str, Any]]:
+        """Fetch open trades for a reactor config."""
+        response = (
+            self._client.table("trades")
+            .select("*")
+            .eq("reactor_config_id", reactor_config_id)
+            .eq("status", "open")
+            .execute()
+        )
+        return response.data or []
+
+    def count_reactor_trades_today(self, reactor_config_id: str) -> int:
+        """Count trades opened today for a reactor config."""
+        from datetime import datetime, timezone
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00+00:00")
+        response = (
+            self._client.table("trades")
+            .select("id", count="exact")
+            .eq("reactor_config_id", reactor_config_id)
+            .gte("opened_at", today)
+            .execute()
+        )
+        return response.count or 0
+
+    def insert_reactor_trade(self, trade: dict[str, Any]) -> dict[str, Any]:
+        """Insert a trade linked to a reactor config."""
+        response = self._client.table("trades").insert(trade).execute()
+        return response.data[0]
+
     # ------------------------------------------------------------------
     # Agent prompts (pending generation)
     # ------------------------------------------------------------------
