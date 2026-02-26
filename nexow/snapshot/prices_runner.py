@@ -2,7 +2,7 @@
 
 Cycle:
 1. Check if yesterday's Massive flat file is available
-2. If yes: delete Oanda rows for that date → insert flat file (source of truth)
+2. If yes: upsert flat file rows (preserves ai_* columns via merge-duplicates)
 3. Fetch Oanda M1 from last known bar until now → fill the gap
 4. Every minute: append latest Oanda M1 bar
 5. Next day: repeat from step 1
@@ -44,19 +44,15 @@ async def _upsert_batch(db: SupabaseClient, rows: list[dict[str, Any]]) -> int:
 
 
 async def _ingest_flat_file(db: SupabaseClient, instrument: str, target_date: date) -> bool:
-    """Download flat file, replace Oanda data for that date. Returns True if successful."""
+    """Download flat file, upsert over Oanda data for that date. Returns True if successful.
+
+    Uses upsert (merge-duplicates) which preserves ai_* columns since
+    flat-file rows don't include them.
+    """
     rows = await asyncio.to_thread(download_minute_aggs, target_date, instrument)
     if not rows:
         return False
 
-    # Delete provisional Oanda data for this date
-    try:
-        db.delete_oanda_prices(instrument, target_date.isoformat())
-        logger.info("oanda_data_replaced", instrument=instrument, date=target_date.isoformat())
-    except Exception as e:
-        logger.warning("oanda_delete_failed", instrument=instrument, error=str(e))
-
-    # Insert flat file data
     upserted = await _upsert_batch(db, rows)
     logger.info(
         "flatfile_ingested",
@@ -129,12 +125,15 @@ async def run_prices_loop(snapshot_svc: SnapshotService | None = None) -> None:
                 if snapshot_data:
                     try:
                         import json
-                        await analyze_snapshot(
-                            snapshot_json=json.dumps(snapshot_data),
-                            instrument=instrument,
-                            timestamp=snapshot_data.get("timestamp", now.isoformat()),
-                            db=db,
-                        )
+                        # Use the latest bar's ts (minute-aligned) to match forex_prices_1m
+                        bar_ts = db.get_latest_price_ts(instrument)
+                        if bar_ts:
+                            await analyze_snapshot(
+                                snapshot_json=json.dumps(snapshot_data),
+                                instrument=instrument,
+                                timestamp=bar_ts,
+                                db=db,
+                            )
                     except Exception as e:
                         logger.warning("analyzer_failed", instrument=instrument, error=str(e))
 

@@ -21,11 +21,11 @@ from nexow.worker.scheduling import granularity_seconds
 logger = structlog.get_logger(__name__)
 
 WEIGHT_KEYS = [
-    ("weight_technical", "technical_score"),
-    ("weight_momentum", "momentum_score"),
-    ("weight_fundamental", "fundamental_score"),
-    ("weight_structure", "structure_score"),
-    ("weight_session", "session_score"),
+    ("weight_technical", "ai_technical"),
+    ("weight_momentum", "ai_momentum"),
+    ("weight_fundamental", "ai_fundamental"),
+    ("weight_structure", "ai_structure"),
+    ("weight_session", "ai_session"),
 ]
 
 # ATR multiplier for stop loss distance
@@ -57,7 +57,7 @@ def _compute_atr(candles: list[Candle], period: int = ATR_PERIOD) -> float:
 def _weighted_score(analyses: list[dict[str, Any]], config: dict[str, Any]) -> float:
     """Compute the weighted average of domain scores using user weights.
 
-    Scores in snapshot_analyses are -1..+1. We normalize to 0..1 for
+    Scores in forex_prices_1m ai_* columns are -1..+1. We normalize to 0..1 for
     comparison with the confidence threshold (which lives in 0..1 space).
     """
     if not analyses:
@@ -124,11 +124,11 @@ class ReactorStrategy:
         current_end = current_start + delta
         current_analyses = [
             a for a in analyses
-            if current_start <= _parse_ts(a["timestamp"]) < current_end
+            if current_start <= _parse_ts(a["ts"]) < current_end
         ]
         previous_analyses = [
             a for a in analyses
-            if previous_start <= _parse_ts(a["timestamp"]) < current_start
+            if previous_start <= _parse_ts(a["ts"]) < current_start
         ]
 
         if not current_analyses:
@@ -228,8 +228,8 @@ class ReactorStrategy:
 
     def _resolve_direction(self, analyses: list[dict[str, Any]]) -> str:
         """Pick direction from the majority vote of recent analyses."""
-        buy_count = sum(1 for a in analyses if a.get("direction") == "buy")
-        sell_count = sum(1 for a in analyses if a.get("direction") == "sell")
+        buy_count = sum(1 for a in analyses if a.get("ai_direction") == "buy")
+        sell_count = sum(1 for a in analyses if a.get("ai_direction") == "sell")
 
         if buy_count > sell_count:
             return "buy"

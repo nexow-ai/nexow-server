@@ -176,20 +176,12 @@ class SupabaseClient:
             rows, on_conflict="instrument,ts"
         ).execute()
 
-    def delete_oanda_prices(self, instrument: str, target_date: str) -> None:
-        """Delete all oanda-sourced rows for a given instrument and date.
-
-        Used when a Massive flat file arrives to replace provisional Oanda data.
-        """
-        # Delete where source=oanda AND ts falls within the target date
-        start = f"{target_date}T00:00:00+00:00"
-        end = f"{target_date}T23:59:59+00:00"
+    def update_price_analysis(self, instrument: str, ts: str, analysis: dict[str, Any]) -> None:
+        """Update ai_* columns on an existing forex_prices_1m row."""
         self._client.table("forex_prices_1m") \
-            .delete() \
+            .update(analysis) \
             .eq("instrument", instrument) \
-            .eq("source", "oanda") \
-            .gte("ts", start) \
-            .lte("ts", end) \
+            .eq("ts", ts) \
             .execute()
 
     def get_latest_price_ts(self, instrument: str) -> str | None:
@@ -241,34 +233,30 @@ class SupabaseClient:
         return all_rows
 
     # ------------------------------------------------------------------
-    # Snapshot Analyses (LLM scoring)
+    # LLM Analyses (ai_* columns on forex_prices_1m)
     # ------------------------------------------------------------------
 
-    def upsert_snapshot_analysis(self, analysis: dict[str, Any]) -> None:
-        """Upsert a snapshot analysis (deduplicates on instrument+timestamp)."""
-        self._client.table("snapshot_analyses").upsert(
-            analysis, on_conflict="instrument,timestamp"
-        ).execute()
-
     def get_latest_analysis(self, instrument: str) -> dict[str, Any] | None:
-        """Get the most recent analysis for an instrument."""
+        """Get the most recent analyzed price row for an instrument."""
         resp = (
-            self._client.table("snapshot_analyses")
+            self._client.table("forex_prices_1m")
             .select("*")
             .eq("instrument", instrument)
-            .order("timestamp", desc=True)
+            .not_.is_("ai_direction", "null")
+            .order("ts", desc=True)
             .limit(1)
             .execute()
         )
         return resp.data[0] if resp.data else None
 
     def get_recent_analyses(self, instrument: str, limit: int = 120) -> list[dict[str, Any]]:
-        """Fetch the N most recent analyses for an instrument (DESC order)."""
+        """Fetch the N most recent analyzed rows for an instrument (DESC order)."""
         resp = (
-            self._client.table("snapshot_analyses")
+            self._client.table("forex_prices_1m")
             .select("*")
             .eq("instrument", instrument)
-            .order("timestamp", desc=True)
+            .not_.is_("ai_direction", "null")
+            .order("ts", desc=True)
             .limit(limit)
             .execute()
         )
@@ -277,14 +265,15 @@ class SupabaseClient:
     def get_analyses_in_range(
         self, instrument: str, from_ts: str, to_ts: str,
     ) -> list[dict[str, Any]]:
-        """Fetch analyses within a time range [from_ts, to_ts), ordered ASC."""
+        """Fetch analyzed rows within a time range [from_ts, to_ts), ordered ASC."""
         resp = (
-            self._client.table("snapshot_analyses")
+            self._client.table("forex_prices_1m")
             .select("*")
             .eq("instrument", instrument)
-            .gte("timestamp", from_ts)
-            .lt("timestamp", to_ts)
-            .order("timestamp")
+            .not_.is_("ai_direction", "null")
+            .gte("ts", from_ts)
+            .lt("ts", to_ts)
+            .order("ts")
             .execute()
         )
         return resp.data or []
@@ -342,7 +331,7 @@ class SupabaseClient:
         response = (
             self._client.table("agents")
             .select("*")
-            .not_("prompt", "is", "null")
+            .not_.is_("prompt", "null")
             .eq("status", "paused")
             .execute()
         )

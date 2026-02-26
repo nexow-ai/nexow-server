@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 import structlog
@@ -42,13 +43,6 @@ Respond ONLY with valid JSON, no markdown, no extra text:
 
 def _get_llm() -> ChatOpenAI:
     """Get the LLM instance for snapshot analysis."""
-    if settings.openai_api_key:
-        return ChatOpenAI(
-            model="gpt-4o-mini",
-            api_key=settings.openai_api_key,
-            max_tokens=256,
-            temperature=0.2,
-        )
     if settings.anthropic_api_key:
         from langchain_anthropic import ChatAnthropic
         return ChatAnthropic(
@@ -56,7 +50,14 @@ def _get_llm() -> ChatOpenAI:
             api_key=settings.anthropic_api_key,
             max_tokens=256,
         )
-    raise RuntimeError("No LLM API key configured (openai or anthropic)")
+    if settings.openai_api_key:
+        return ChatOpenAI(
+            model="gpt-4o-mini",
+            api_key=settings.openai_api_key,
+            max_tokens=256,
+            temperature=0.2,
+        )
+    raise RuntimeError("No LLM API key configured (anthropic or openai)")
 
 
 def _extract_token_usage(response: Any) -> tuple[int, int]:
@@ -103,7 +104,7 @@ async def analyze_snapshot(
 ) -> dict[str, Any]:
     """Call LLM to analyze a snapshot and return structured scores.
 
-    Also upserts the result into snapshot_analyses table if db is provided.
+    Also updates ai_* columns on the forex_prices_1m row if db is provided.
     """
     start = time.monotonic()
 
@@ -128,28 +129,27 @@ async def analyze_snapshot(
     scores["overall_score"] = round(sum(section_scores) / len(section_scores), 2)
 
     result = {
-        "instrument": instrument,
-        "timestamp": timestamp,
-        "technical_score": scores["technical_score"],
-        "momentum_score": scores["momentum_score"],
-        "fundamental_score": scores["fundamental_score"],
-        "structure_score": scores["structure_score"],
-        "session_score": scores["session_score"],
-        "overall_score": scores["overall_score"],
-        "direction": scores["direction"],
-        "reasoning": scores.get("reasoning", ""),
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "llm_model": llm.model_name if hasattr(llm, "model_name") else "unknown",
-        "duration_ms": duration_ms,
+        "ai_technical": scores["technical_score"],
+        "ai_momentum": scores["momentum_score"],
+        "ai_fundamental": scores["fundamental_score"],
+        "ai_structure": scores["structure_score"],
+        "ai_session": scores["session_score"],
+        "ai_overall": scores["overall_score"],
+        "ai_direction": scores["direction"],
+        "ai_reasoning": scores.get("reasoning", ""),
+        "ai_model": getattr(llm, "model_name", None) or getattr(llm, "model", "unknown"),
+        "ai_tokens_in": prompt_tokens,
+        "ai_tokens_out": completion_tokens,
+        "ai_duration_ms": duration_ms,
+        "ai_analyzed_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Store in DB
+    # Store in DB — update the existing forex_prices_1m row
     if db:
         try:
-            db.upsert_snapshot_analysis(result)
+            db.update_price_analysis(instrument, timestamp, result)
         except Exception as e:
-            logger.warning("analyzer_db_upsert_failed", error=str(e))
+            logger.warning("analyzer_db_update_failed", error=str(e))
 
     logger.info(
         "snapshot_analyzed",
