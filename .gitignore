@@ -60,6 +60,10 @@ logs/
 *.sqlite
 *.sqlite3
 
+# Redis
+*.rdb
+dump.rdb
+
 # Supabase
 supabase/.temp/
 

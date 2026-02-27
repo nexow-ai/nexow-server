@@ -1,6 +1,6 @@
-"""Market data endpoints — prices, candles, instruments."""
+"""Market data endpoints — prices, candles, instruments, economic calendar."""
 
-from datetime import datetime
+from datetime import date, datetime
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from nexow.broker.oanda import OandaClient
 from nexow.config import settings
+from nexow.db.client import SupabaseClient
 
 router = APIRouter(prefix="/api/data", tags=["data"])
 
@@ -120,6 +121,65 @@ async def get_candles_get(
                 for c in candles
             ],
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/balance")
+async def get_balance():
+    """Get Oanda account balance."""
+    try:
+        balance = await get_oanda().get_balance()
+        return {"balance": balance, "currency": "USD"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/economic-calendar")
+async def get_economic_calendar(
+    target_date: str | None = Query(default=None, description="Date YYYY-MM-DD (default: today)"),
+    currency: str | None = Query(default=None, description="Filter by currency (e.g. USD)"),
+):
+    """Get economic events scraped from Forex Factory."""
+    try:
+        db = SupabaseClient()
+        if target_date is None:
+            target_date = date.today().isoformat()
+        events = db.get_economic_events(target_date=target_date, currency=currency)
+        return {"date": target_date, "currency": currency, "events": events, "count": len(events)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/snapshot/{instrument}")
+async def get_snapshot(instrument: str):
+    """Get the latest market snapshot for an instrument.
+
+    Tries Redis cache first; if empty, computes on-the-fly from DB data.
+    """
+    try:
+        from nexow.snapshot.redis_store import SnapshotRedisStore
+
+        store = SnapshotRedisStore()
+        await store.connect()
+        snapshot = await store.get_snapshot(instrument)
+        await store.close()
+
+        if snapshot is not None:
+            return snapshot
+
+        # Fallback: compute on-the-fly
+        from nexow.snapshot.service import SnapshotService
+
+        svc = SnapshotService()
+        await svc._load_history(instrument)
+        df = svc._dataframes.get(instrument)
+        if df is None or df.height < 50:
+            raise HTTPException(status_code=404, detail="Not enough price data to build snapshot.")
+        result = svc._build_snapshot(instrument, df)
+        return result.model_dump()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

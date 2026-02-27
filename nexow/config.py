@@ -52,6 +52,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("SANDBOX_URL", "WASM_EXECUTOR_URL"),
     )
 
+    # --- Massive (Flat Files S3) ---
+    massive_s3_endpoint: str = "https://files.massive.com"
+    massive_s3_bucket: str = "flatfiles"
+    massive_s3_access_key_id: str = ""
+    massive_s3_secret_access_key: str = ""
+
     # --- CORS ---
     cors_origins: list[str] = []
 

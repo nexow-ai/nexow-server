@@ -9,5 +9,6 @@ cd "$ROOT"
 
 uv run uvicorn nexow.api.app:app --host 0.0.0.0 --port 8000 --reload &
 uv run python -m nexow.worker &
+uv run python -m nexow.snapshot &
 (cd sandbox && pnpm run dev) &
 wait
