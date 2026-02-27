@@ -206,6 +206,18 @@ class OandaClient:
         return prices
 
     # ------------------------------------------------------------------
+    # Account
+    # ------------------------------------------------------------------
+
+    async def get_balance(self) -> float:
+        """Get account balance (cash, excluding unrealized P&L)."""
+        url = f"{self.account_url}/summary"
+        resp = await self._http.get(url)
+        resp.raise_for_status()
+        data = resp.json()
+        return float(data["account"]["balance"])
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 

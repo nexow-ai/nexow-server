@@ -194,10 +194,8 @@ class ReactorStrategy:
         sl_distance = atr * ATR_MULTIPLIER
         sl_pct = (sl_distance / current_price) * 100
 
-        # Cap SL by user risk config (in percentage mode)
-        if self.config.get("risk_mode") == "percentage":
-            risk_cap = float(self.config.get("risk_value", 1.0))
-            sl_pct = min(sl_pct, risk_cap)
+        # Position sizing handles risk: qty = risk_value / sl_distance
+        # SL stays at ATR level, no capping needed
 
         # TP = SL × reward_ratio
         reward_ratio = float(self.config.get("reward_ratio", 2.0))

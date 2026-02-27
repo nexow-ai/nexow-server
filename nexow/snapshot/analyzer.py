@@ -46,7 +46,7 @@ def _get_llm() -> ChatOpenAI:
     if settings.anthropic_api_key:
         from langchain_anthropic import ChatAnthropic
         return ChatAnthropic(
-            model="claude-sonnet-4-20250514",
+            model="claude-haiku-4-5-20251001",
             api_key=settings.anthropic_api_key,
             max_tokens=256,
         )

@@ -125,6 +125,16 @@ async def get_candles_get(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/balance")
+async def get_balance():
+    """Get Oanda account balance."""
+    try:
+        balance = await get_oanda().get_balance()
+        return {"balance": balance, "currency": "USD"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/economic-calendar")
 async def get_economic_calendar(
     target_date: str | None = Query(default=None, description="Date YYYY-MM-DD (default: today)"),
