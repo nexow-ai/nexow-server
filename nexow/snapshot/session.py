@@ -32,10 +32,6 @@ def _get_active_session(hour: int, weekday: int) -> ForexSession:
     if weekday == 4 and hour >= 21:
         return ForexSession.closed
 
-    # Sunday before Pacific open
-    if weekday == 6 and hour < 21:
-        return ForexSession.closed
-
     # Overlap London+NY is categorized as NY (most volume)
     if 12 <= hour < 16:
         return ForexSession.new_york

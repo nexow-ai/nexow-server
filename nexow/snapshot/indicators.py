@@ -144,9 +144,9 @@ def extract_macd(df: pl.DataFrame) -> MACDData:
                 cross = "bullish"
             elif prev_hist > 0 and hist <= 0:
                 cross = "bearish"
-            elif prev_hist < 0 and hist < 0 and hist > prev_hist:
+            elif prev_hist < 0 and hist > prev_hist:
                 cross = "bullish_pending"
-            elif prev_hist > 0 and hist > 0 and hist < prev_hist:
+            elif prev_hist > 0 and hist < prev_hist:
                 cross = "bearish_pending"
 
     return MACDData(

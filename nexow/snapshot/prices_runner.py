@@ -149,7 +149,7 @@ async def main() -> None:
     try:
         await run_prices_loop()
     except KeyboardInterrupt:
-        pass
+        logger.info("prices_runner_stopped")
 
 
 if __name__ == "__main__":

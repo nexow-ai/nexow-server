@@ -23,7 +23,7 @@ async def main() -> None:
             run_prices_loop(),
         )
     except KeyboardInterrupt:
-        pass
+        logger.info("snapshot_service_stopped")
 
 
 if __name__ == "__main__":
