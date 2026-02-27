@@ -322,6 +322,13 @@ class SupabaseClient:
         response = self._client.table("trades").insert(trade).execute()
         return response.data[0]
 
+    def insert_signal_log(self, record: dict[str, Any]) -> None:
+        """Insert a reactor signal evaluation log entry."""
+        try:
+            self._client.table("reactor_signal_log").insert(record).execute()
+        except Exception:
+            pass  # Non-critical, don't break the flow
+
     # ------------------------------------------------------------------
     # Agent prompts (pending generation)
     # ------------------------------------------------------------------

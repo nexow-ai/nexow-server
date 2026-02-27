@@ -351,6 +351,18 @@ class WorkerLoop:
                 reason=signal.reason,
             )
 
+            # Persist every signal evaluation to the log table
+            from datetime import datetime, timezone as tz
+            self.db.insert_signal_log({
+                "reactor_config_id": config["id"],
+                "instrument": instrument,
+                "timeframe": timeframe,
+                "signal_type": signal.type.value,
+                "confidence": round(signal.confidence, 4),
+                "reason": signal.reason or "",
+                "candle_ts": datetime.fromtimestamp(latest_ts, tz=tz.utc).isoformat(),
+            })
+
             self._last_eval_candle_ts[last_key] = latest_ts
 
             if signal.type in (SignalType.BUY, SignalType.SELL):
