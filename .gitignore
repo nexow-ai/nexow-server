@@ -22,10 +22,9 @@ ENV/
 .env.local
 .env.*.local
 
-# Lock files
+# Lock files (uv.lock committed for reproducible Docker builds)
 *.lock
-uv.lock
-poetry.lock
+!uv.lock
 Pipfile.lock
 
 # IDE
@@ -60,6 +59,10 @@ logs/
 *.db
 *.sqlite
 *.sqlite3
+
+# Redis
+*.rdb
+dump.rdb
 
 # Supabase
 supabase/.temp/

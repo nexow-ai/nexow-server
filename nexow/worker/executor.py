@@ -62,6 +62,18 @@ class SignalExecutor:
                 confidence=f"{signal.confidence:.2f}",
             )
 
+            # Log each evaluation to agent_logs so the bot console shows it (including hold)
+            try:
+                log_level = "trade" if signal.type in (SignalType.BUY, SignalType.SELL) else "info"
+                self.db.insert_agent_log(
+                    record_id,
+                    log_level,
+                    f"EVAL {signal.type.value.upper()} — {signal.reason}",
+                    {"instrument": instrument},
+                )
+            except Exception as e:
+                logger.debug("agent_log_insert_error", id=record_id[:8], error=str(e))
+
             evaluation_id: str | None = None
             if is_agent:
                 evaluation_id = self._record_evaluation(record, signal, instrument)

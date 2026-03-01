@@ -1,4 +1,4 @@
-.PHONY: api worker sandbox dev install lint format test clean
+.PHONY: api worker sandbox dev install lint lint-fix format fix test clean
 
 # ── Run ──────────────────────────────────────────────────
 
@@ -12,11 +12,7 @@ sandbox:  ## Start the WASM sandbox sidecar
 	cd sandbox && pnpm run dev
 
 dev:  ## Start API + worker + sandbox together (Ctrl+C stops all)
-	@trap 'kill 0' EXIT; \
-	uv run uvicorn nexow.api.app:app --host 0.0.0.0 --port 8000 --reload & \
-	uv run python -m nexow.worker & \
-	(cd sandbox && pnpm run dev) & \
-	wait
+	@bash "$(CURDIR)/scripts/dev.sh"
 
 # ── Setup ────────────────────────────────────────────────
 
@@ -31,11 +27,16 @@ env:  ## Create .env from sample
 
 # ── Quality ──────────────────────────────────────────────
 
-lint:  ## Run linter
+lint:  ## Run linter (check only)
 	uv run ruff check nexow/
+
+lint-fix:  ## Run linter with auto-fix
+	uv run ruff check nexow/ --fix
 
 format:  ## Auto-format code
 	uv run ruff format nexow/
+
+fix: format lint-fix  ## Format + lint with auto-fix
 
 test:  ## Run tests
 	uv run pytest -v
