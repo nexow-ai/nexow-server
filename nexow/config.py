@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     # --- Service ---
     port: int = 8000
     environment: str = "development"
+    frontend_url: str = "http://localhost:3000"  # where to redirect after Saxo OAuth
 
     # --- Supabase ---
     supabase_url: str = ""
@@ -27,6 +28,15 @@ class Settings(BaseSettings):
     ig_api_key: str = Field(default="", validation_alias="IG_API_TOKEN")
     ig_username: str = ""
     ig_password: str = ""
+
+    # --- Saxo Bank OpenAPI ---
+    saxo_base_url: str = "https://gateway.saxobank.com/sim/openapi"
+    saxo_auth_url: str = "https://sim.logonvalidation.net"
+    saxo_app_key: str = ""
+    saxo_app_secret: str = ""
+    saxo_redirect_uri: str = ""
+    saxo_redirect_uri_development: str = ""  # e.g. http://localhost:8000/saxo/auth/callback when label=development
+    saxo_access_token: str = ""  # optional: 24h dev token from portal
 
     # --- Redis ---
     redis_url: str = "redis://localhost:6379"
