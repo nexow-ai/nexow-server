@@ -195,6 +195,11 @@ class SaxoClient:
         out = await self._request("GET", "cm/v1/signups/options")
         return out or {}
 
+    async def cm_create_account(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST /cm/v2/accounts — create an additional account for the existing client. Body must have accountCreateRequest with at least ClientKey."""
+        out = await self._request("POST", "cm/v2/accounts", json=body)
+        return out or {}
+
     # --- Reference Data (Phase 2) ---
 
     async def ref_instruments(self, params: dict[str, Any] | None = None) -> list[Any]:

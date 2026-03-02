@@ -442,6 +442,55 @@ async def saxo_update_account(account_key: str, body: dict):
         raise HTTPException(e.status_code or 502, detail=str(e))
 
 
+@router.post("/accounts")
+async def saxo_create_account(
+    body: dict | None = None,
+    choice_of_account: str | int | None = Query(None, alias="choiceOfAccount"),
+):
+    """Create an additional account for your client (same login). Uses Saxo cm/v2/accounts. Sends ClientKey and ChoiceOfAccount at root (Saxo expects Path '')."""
+    try:
+        client = get_saxo()
+        payload = dict(body or {})
+        client_key = payload.get("ClientKey")
+        if not client_key:
+            me = await client.get_me()
+            client_key = me.get("ClientKey")
+            if not client_key:
+                raise HTTPException(
+                    400,
+                    detail="Could not determine ClientKey (port/v1/users/me did not return it). Pass ClientKey in the request body.",
+                )
+        choice_val = payload.get("ChoiceOfAccount") or payload.get("choiceOfAccount")
+        if choice_val is None and choice_of_account is not None:
+            choice_val = choice_of_account
+        if choice_val is None:
+            choice_val = 0
+        request_body = {
+            "ClientKey": client_key,
+            "ChoiceOfAccount": choice_val,
+        }
+        data = await client.cm_create_account(body=request_body)
+        return data
+    except SaxoClientError as e:
+        detail = str(e)
+        if e.body and isinstance(e.body, dict):
+            msg = (
+                e.body.get("Message")
+                or e.body.get("message")
+                or e.body.get("error_description")
+            )
+            if msg:
+                detail = f"{detail}; {msg}"
+            if e.status_code == 400:
+                detail = f"{detail} Body: {json.dumps(e.body)}"
+        if e.status_code == 404:
+            detail = (
+                "Create account API (cm/v2/accounts) is not available for your Saxo "
+                "environment or app (404). Open additional accounts at saxobank.com or in the Saxo app."
+            )
+        raise HTTPException(e.status_code or 502, detail=detail)
+
+
 # --- Trading (Phase 2) ---
 
 @router.get("/orders")
