@@ -400,6 +400,48 @@ async def saxo_clients():
     except SaxoClientError as e:
         raise HTTPException(e.status_code or 502, detail=str(e))
 
+
+@router.get("/accounts")
+async def saxo_accounts(
+    client_key: str | None = Query(None, alias="clientKey"),
+    include_sub_accounts: bool | None = Query(None, alias="includeSubAccounts"),
+):
+    """List accounts for the authenticated user (port/v1/accounts/me)."""
+    try:
+        client = get_saxo()
+        params: dict[str, str | bool] = {}
+        if client_key:
+            params["ClientKey"] = client_key
+        if include_sub_accounts is not None:
+            params["IncludeSubAccounts"] = include_sub_accounts
+        data = await client.port_accounts_me(params or None)
+        return {"accounts": data}
+    except SaxoClientError as e:
+        raise HTTPException(e.status_code or 502, detail=str(e))
+
+
+@router.get("/accounts/{account_key}")
+async def saxo_account(account_key: str):
+    """Get a single account by AccountKey."""
+    try:
+        client = get_saxo()
+        data = await client.port_account(account_key)
+        return data
+    except SaxoClientError as e:
+        raise HTTPException(e.status_code or 502, detail=str(e))
+
+
+@router.patch("/accounts/{account_key}")
+async def saxo_update_account(account_key: str, body: dict):
+    """Update account (e.g. DisplayName)."""
+    try:
+        client = get_saxo()
+        data = await client.port_update_account(account_key, body)
+        return data
+    except SaxoClientError as e:
+        raise HTTPException(e.status_code or 502, detail=str(e))
+
+
 # --- Trading (Phase 2) ---
 
 @router.get("/orders")

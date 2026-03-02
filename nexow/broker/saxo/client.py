@@ -292,6 +292,29 @@ class SaxoClient:
 
     # --- Portfolio (Phase 2) ---
 
+    async def port_accounts_me(
+        self, params: dict[str, Any] | None = None
+    ) -> list[Any]:
+        """GET port/v1/accounts/me — accounts for the logged-in user."""
+        out = await self._request("GET", "port/v1/accounts/me", params=params or {})
+        if isinstance(out, list):
+            return out
+        return out.get("Data", []) if isinstance(out, dict) else []
+
+    async def port_account(self, account_key: str) -> dict[str, Any]:
+        """GET port/v1/accounts/{AccountKey} — single account details."""
+        out = await self._request("GET", f"port/v1/accounts/{account_key}")
+        return out or {}
+
+    async def port_update_account(
+        self, account_key: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """PATCH port/v1/accounts/{AccountKey} — update account (e.g. DisplayName)."""
+        out = await self._request(
+            "PATCH", f"port/v1/accounts/{account_key}", json=body
+        )
+        return out or {}
+
     async def port_balances(self, params: dict[str, Any] | None = None) -> list[Any]:
         """GET port/v1/balances — balances for the authenticated user."""
         out = await self._request("GET", "port/v1/balances", params=params or {})
