@@ -2,6 +2,8 @@
 
 Reference: [developer.saxo/openapi/referencedocs](https://www.developer.saxo/openapi/referencedocs)
 
+`.env` is committed encrypted with git-crypt. On a new machine, install git-crypt and run `git-crypt unlock ~/.config/git-crypt/nexow.ai/nexow-server.key` once. The working tree stays plaintext; the blob in git is ciphertext. Plaintext `.env.*` overrides stay gitignored (`.env.sample` stays plaintext). The key file is never committed.
+
 Service groups in **business dependency order**: you need onboarded clients before they have accounts to trade or view portfolio — so **Client Management (onboarding) comes first**, then Trading + Portfolio (per user).
 
 ---
